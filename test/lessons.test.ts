@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { platform, finish, P, A, D, I } from "./platform.js";
 import { FileManager, lintDockerfile } from "../src/files.js";
@@ -131,6 +131,27 @@ test("a lock left by a dead process is broken; a live holder still blocks", asyn
     await assert.rejects(
       f.store.exclusive(async () => {}),
       /busy|holds/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a call waits while another MCP's deployment step holds the lock (Codex stop_app was busy every time)", async () => {
+  const f = await platform();
+  try {
+    const lock = join(f.config.stateDir, ".lock");
+    await f.store.exclusive(async () => {}); // creates the state folder
+    await writeFile(lock, JSON.stringify({ pid: process.ppid, token: "x" }));
+    setTimeout(() => void rm(lock, { force: true }), 300);
+    f.store.lockWaitMs = 3000;
+    assert.equal(await f.store.exclusive(async () => "ran"), "ran");
+
+    await writeFile(lock, JSON.stringify({ pid: process.ppid, token: "x" }));
+    f.store.lockWaitMs = 200;
+    await assert.rejects(
+      f.store.exclusive(async () => {}),
+      (e: any) => e.code === "busy" && /Repeat the same call/.test(e.message),
     );
   } finally {
     await f.close();

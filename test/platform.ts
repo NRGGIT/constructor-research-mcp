@@ -407,6 +407,7 @@ export async function platform() {
   const api = new PlatformApi(config);
   api.storageRetryMs = [1, 1, 1];
   const store = new StateStore(config);
+  store.lockWaitMs = 0;
   const engine = new DeploymentEngine(api, store);
   /** Public URLs answer immediately unless a test says otherwise. */
   engine.probeUrl = async () => db.probeStatus ?? 200;

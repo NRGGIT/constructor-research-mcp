@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { configFromEnv, originOf } from "./config.js";
+import { configFromEnv, originOf, VERSION } from "./config.js";
 import { PlatformApi, ToolError } from "./api.js";
 import { StateStore } from "./store.js";
 import { DeploymentEngine, terminal } from "./deployment.js";
@@ -150,7 +150,7 @@ async function main() {
         : result;
     };
   const server = new McpServer(
-    { name: "constructor-research", version: "0.2.0" },
+    { name: "constructor-research", version: VERSION },
     {
       instructions: `Sign-in: the MCP works with one Constructor, https://constructor.app unless the user signed in to another. When the user asks to sign in, or names their Constructor or gives a link from it (e.g. https://learn.constructor.university), call sign_in with url set to that link. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project or desk yourself; if the user has not said where to deploy or where files live, ask. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
     },

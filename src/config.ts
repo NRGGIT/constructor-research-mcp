@@ -157,6 +157,14 @@ export function waitCommand(config: Config, ids: string[]) {
   return `${env}${waitProgram()} ${ids.join(" ")}`;
 }
 
+/** This package's version, as published; the server reports it on connect. */
+export const VERSION: string = JSON.parse(
+  readFileSync(
+    join(fileURLToPath(import.meta.url), "..", "..", "package.json"),
+    "utf8",
+  ),
+).version;
+
 /**
  * How to run the wait CLI of this very version. Run through npx, the MCP lives in npx's
  * cache, whose folder npm may replace at any time, so the hint names the package instead.

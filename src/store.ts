@@ -63,6 +63,12 @@ export interface Operation {
 }
 export class StateStore {
   constructor(readonly config: Config) {}
+  /**
+   * How long a call waits for the lock. Every MCP process on this machine shares it, and
+   * a deployment step holds it for its API calls (seconds), so failing at once made other
+   * harnesses' calls "busy" about half the time while anything was deploying.
+   */
+  lockWaitMs = 15000;
   /** The Constructor API saved operations belong to; follows a sign-in to another host. */
   get endpoint() {
     return this.config.baseUrl + this.config.apiPath;
@@ -132,9 +138,12 @@ export class StateStore {
     return withLock(
       lock,
       fn,
-      0,
+      this.lockWaitMs,
       () =>
-        new ToolError("busy", `Another operation holds ${lock}. Retry later.`),
+        new ToolError(
+          "busy",
+          `Another operation still holds ${lock} after ${this.lockWaitMs / 1000} s. Repeat the same call.`,
+        ),
     );
   }
 }

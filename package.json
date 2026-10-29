@@ -1,6 +1,6 @@
 {
   "name": "constructor-research-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Local deployment MCP for Constructor Research",
   "license": "MIT",
