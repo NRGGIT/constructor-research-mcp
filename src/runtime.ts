@@ -242,7 +242,7 @@ export class DeploymentRuntime {
                   ? "Inspect the uncertain mutation in Constructor before submitting a new operation."
                   : terminal.has(op.status)
                     ? undefined
-                    : `The MCP is executing this deployment. Keep working on other things and check later with get_deployment. If nothing else is left, wait with the shell command \`${waitCommand(this.engine.api.config, [op.id])}\` (run it in the background if your client wakes you when a background command ends); it prints the outcome when the deployment finishes. Without a shell, call get_deployment with wait_seconds=20.`,
+                    : `Not finished yet; builds often take several minutes. Do not end your turn or answer the user until execution is finished: they asked for the result (the public_url, or what failed). Finish any other work of this request, then wait with the shell command \`${waitCommand(this.engine.api.config, [op.id])}\`; it prints the outcome when the deployment finishes. Run it in the foreground, or in the background only if your client wakes you when a background command ends. Without a shell, keep calling get_deployment with wait_seconds=20 until execution is finished.`,
     };
   }
   private async wait(id: string, milliseconds: number) {

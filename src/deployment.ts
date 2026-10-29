@@ -1425,7 +1425,7 @@ export class DeploymentEngine {
               ? `${this.api.authHelp("The token expired or is invalid.")} Then call get_deployment with this deployment_id.`
               : op.status === "needs_upload"
                 ? "Upload files with sync_files, then call get_deployment with files_uploaded=true."
-                : "Execution continues automatically in the MCP. Use get_deployment with wait_seconds=20 to wait for the result; do not orchestrate individual steps.",
+                : "Execution continues automatically in the MCP. Keep calling get_deployment with wait_seconds=20 until it is finished, then tell the user the result; do not orchestrate individual steps.",
     };
     if (cache) {
       op.result = result;
