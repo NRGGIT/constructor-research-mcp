@@ -369,7 +369,7 @@ export const signInInput = z.strictObject({
     .max(2000)
     .optional()
     .describe(
-      "Any link to the user's Constructor: a desk link, or just its address, e.g. https://learn.constructor.university. The user signs in there and the MCP works there afterwards, replacing any earlier sign-in. Pass it when the user names their Constructor or gives a link; omit it to sign in where the MCP works now (https://constructor.app unless the user signed in elsewhere).",
+      "Any link to the user's Constructor: a desk link, or just its address, e.g. https://acme.constructor.app. The user signs in there and the MCP works there afterwards, replacing any earlier sign-in. Pass it when the user names their Constructor or gives a link; omit it to sign in where the MCP works now (https://constructor.app unless the user signed in elsewhere).",
     ),
   wait_seconds: z
     .number()

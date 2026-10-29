@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { parseDeskUrl, resolveDeskUrl } from "../src/location.js";
 import { platform, P, D } from "./platform.js";
 
-const base = "https://learn.constructor.university";
+const base = "https://acme.constructor.app";
 const link = `${base}/research/projects/c98d546de8104a2d9968aba721fe90f2/desks/fef21248839c46188eb75dad0b5a375e/viewer/file`;
 
 test("desk links yield project and desk IDs whatever follows the desk", () => {
@@ -41,7 +41,7 @@ test("links from another Constructor or without a desk are rejected", () => {
     () => parseDeskUrl(other, base),
     (e: any) =>
       e.code === "wrong_environment" &&
-      /signed in to https:\/\/learn\.constructor\.university.*call sign_in with url set to this link/.test(
+      /signed in to https:\/\/acme\.constructor\.app.*call sign_in with url set to this link/.test(
         e.message,
       ),
   );

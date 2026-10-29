@@ -40,7 +40,7 @@ Each harness signs in once and keeps its own Constructor session; nothing is sto
 2. The user signs in. The MCP reads the session cookies, closes the window itself and deletes the profile.
 3. It saves `ap_access_token`, `ap_id_token` and `ap_refresh_token` to that harness's session file and answers `signed_in`. No token is ever returned or printed.
 
-The MCP works with one Constructor at a time: the one the user signed in to, recorded as a `host=` line in the session file. Before the first sign-in it is `https://constructor.app`, or the host of a desk link the user gave. For another Constructor (for example `https://learn.constructor.university`), the agent passes any link from it as `sign_in`'s `url`; the new sign-in replaces the old one, and the MCP works there from then on. A desk link from a different Constructor than the signed-in one returns `wrong_environment`, which tells the agent to sign in there with that link.
+The MCP works with one Constructor at a time: the one the user signed in to, recorded as a `host=` line in the session file. Before the first sign-in it is `https://constructor.app`, or the host of a desk link the user gave. For another Constructor (for example `https://acme.constructor.app`), the agent passes any link from it as `sign_in`'s `url`; the new sign-in replaces the old one, and the MCP works there from then on. A desk link from a different Constructor than the signed-in one returns `wrong_environment`, which tells the agent to sign in there with that link.
 
 `sign_in` waits up to `wait_seconds` (default 20, so it stays within short harness tool timeouts); while the user is still signing in it returns `sign_in_pending`, and calling it again waits on the same window. With a renewable session already saved it answers `signed_in` without opening anything (`force=true` signs in again).
 
@@ -52,7 +52,7 @@ The same sign-in from a terminal (use `codex` or `opencode` in place of `claude-
 
 ```sh
 npx -y -p constructor-research-mcp constructor-research-login --for claude-code
-npx -y -p constructor-research-mcp constructor-research-login --url https://learn.constructor.university --for claude-code
+npx -y -p constructor-research-mcp constructor-research-login --url https://acme.constructor.app --for claude-code
 ```
 
 On a machine without a screen (Linux without `DISPLAY`/`WAYLAND_DISPLAY`), `sign_in` says so; save a session from a copied cURL (DevTools → Network → Copy as cURL) instead:

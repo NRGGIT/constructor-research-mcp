@@ -1,6 +1,6 @@
 # Install the Constructor Research MCP
 
-The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as learn.constructor.university. It runs on your machine as a local MCP server, installed from npm. Each tool signs in to Constructor once, with its own session.
+The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as acme.constructor.app. It runs on your machine as a local MCP server, installed from npm. Each tool signs in to Constructor once, with its own session.
 
 ## What you need
 
@@ -69,7 +69,7 @@ Do not put a token or cookie file in these settings; sign-in is handled by the M
 ## 2. Restart and sign in
 
 1. Restart the tool, or run `/mcp` in Claude Code, so it starts the MCP. The first start downloads it and can take a minute.
-2. Ask the agent to sign in. If your Constructor is not constructor.app, give its address, for example "sign in to Constructor at https://learn.constructor.university". A desk link from it works too.
+2. Ask the agent to sign in. If your Constructor is not constructor.app, give its address, for example "sign in to Constructor at https://acme.constructor.app". A desk link from it works too.
 3. The agent says a sign-in window will open and calls `sign_in`. A separate browser window opens at your Constructor's sign-in page.
 4. Sign in. The window closes by itself.
 

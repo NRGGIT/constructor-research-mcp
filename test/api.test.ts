@@ -77,7 +77,7 @@ test("configuration defaults to constructor.app and rejects insecure remote host
   assert.equal(configFromEnv({}).baseUrlFixed, false);
   assert.equal(
     configFromEnv({
-      CONSTRUCTOR_BASE_URL: "https://learn.constructor.university",
+      CONSTRUCTOR_BASE_URL: "https://acme.constructor.app",
     }).baseUrlFixed,
     true,
   );
