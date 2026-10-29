@@ -1,0 +1,6 @@
+[mcp_servers.constructor-research]
+command = "npx"
+args = ["-y", "constructor-research-mcp@latest"]
+# The first start downloads the package.
+startup_timeout_sec = 60
+tool_timeout_sec = 30

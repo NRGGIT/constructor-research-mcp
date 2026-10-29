@@ -1,0 +1,62 @@
+{
+  "name": "constructor-research-mcp",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Local deployment MCP for Constructor Research",
+  "license": "MIT",
+  "author": "Constructor Tech",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NRGGIT/constructor-research-mcp.git"
+  },
+  "homepage": "https://github.com/NRGGIT/constructor-research-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/NRGGIT/constructor-research-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "constructor",
+    "claude-code",
+    "codex",
+    "opencode"
+  ],
+  "bin": {
+    "constructor-research-mcp": "dist/server.js",
+    "constructor-research-wait": "dist/wait.js",
+    "constructor-research-login": "dist/login.js",
+    "constructor-research-set-token": "dist/set-token.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "INSTALL.md",
+    "examples"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "tsx --test test/*.test.ts",
+    "check": "tsc --noEmit",
+    "pretest": "npm run build",
+    "format": "prettier --write src test examples README.md INSTALL.md",
+    "format:check": "prettier --check src test examples README.md INSTALL.md",
+    "set-token": "node dist/set-token.js",
+    "wait": "node dist/wait.js",
+    "login": "node dist/login.js",
+    "prepublishOnly": "npm run check && npm run format:check && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

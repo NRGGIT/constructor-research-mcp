@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__constructor-research__(deploy_app|update_app|build_image|start_app|stop_app|get_deployment)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y -p constructor-research-mcp constructor-research-wait --hook claude-code",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ]
+  }
+}

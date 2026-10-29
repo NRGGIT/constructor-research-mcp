@@ -1,0 +1,39 @@
+{
+  "project_id": "PROJECT_ID",
+  "application_name": "task-tracker",
+  "files_uploaded": true,
+  "services": [
+    {
+      "name": "backend",
+      "build": {
+        "desk_id": "DISK_ID",
+        "dockerfile": "/backend/Dockerfile"
+      },
+      "ports": [
+        {
+          "number": 3000,
+          "expose_to_internet": true
+        }
+      ]
+    },
+    {
+      "name": "frontend",
+      "build": {
+        "desk_id": "DISK_ID",
+        "dockerfile": "/frontend/Dockerfile"
+      },
+      "ports": [
+        {
+          "number": 5000,
+          "expose_to_internet": true
+        }
+      ],
+      "environment_variables": {
+        "BACKEND_URL": {
+          "service": "backend",
+          "exposure": "public"
+        }
+      }
+    }
+  ]
+}

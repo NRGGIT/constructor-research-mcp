@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "constructor-research": {
+      "command": "npx",
+      "args": ["-y", "constructor-research-mcp@latest"]
+    }
+  }
+}
