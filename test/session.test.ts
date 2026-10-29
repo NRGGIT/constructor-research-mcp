@@ -339,10 +339,7 @@ test("a session names its Constructor: the host line, else the token's issuer", 
       file,
       `ap_access_token=${jwt(60, { iss: "https://acme.constructor.app/idp" })}\n`,
     );
-    assert.equal(
-      await sessionHost(file),
-      "https://acme.constructor.app",
-    );
+    assert.equal(await sessionHost(file), "https://acme.constructor.app");
     await saveSession(
       file,
       new Map([
@@ -354,16 +351,10 @@ test("a session names its Constructor: the host line, else the token's issuer", 
       await readFile(file, "utf8"),
       /^ap_access_token=\S+\nhost=https:\/\/acme\.constructor\.app\n$/,
     );
-    assert.equal(
-      await sessionHost(file),
-      "https://acme.constructor.app",
-    );
+    assert.equal(await sessionHost(file), "https://acme.constructor.app");
     // Renewal keeps the host line.
     await saveSession(file, new Map([["ap_access_token", "ey.x.y"]]));
-    assert.equal(
-      await sessionHost(file),
-      "https://acme.constructor.app",
-    );
+    assert.equal(await sessionHost(file), "https://acme.constructor.app");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
