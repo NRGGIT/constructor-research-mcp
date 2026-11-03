@@ -122,7 +122,7 @@ test("hooks: Codex continues the turn with the outcome, Claude Code is woken wit
   const env = {
     ...process.env,
     CONSTRUCTOR_BASE_URL: f.config.baseUrl,
-    CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+    CONSTRUCTOR_KEY_FILE: f.config.keyFile,
     CONSTRUCTOR_STATE_DIR: f.config.stateDir,
   };
   const cli = (args: string[], input = "{}") => {

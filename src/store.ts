@@ -69,7 +69,7 @@ export class StateStore {
    * harnesses' calls "busy" about half the time while anything was deploying.
    */
   lockWaitMs = 15000;
-  /** The Constructor API saved operations belong to; follows a sign-in to another host. */
+  /** The Constructor API saved operations belong to; follows a key saved for another host. */
   get endpoint() {
     return this.config.baseUrl + this.config.apiPath;
   }

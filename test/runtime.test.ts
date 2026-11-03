@@ -260,7 +260,7 @@ test("service start failures report exact stage and service with check-logs inst
   }
 });
 
-test("checking a paused deployment after cookie replacement waits for the resumed execution", async () => {
+test("checking a paused deployment after the key is accepted again waits for the resumed execution", async () => {
   const f = await platform();
   const runtime = new DeploymentRuntime(f.engine, 20);
   try {
@@ -271,7 +271,7 @@ test("checking a paused deployment after cookie replacement waits for the resume
       services: [{ name: "web", image_id: I }],
       wait_seconds: 0,
     });
-    assert.equal(r.status, "needs_auth");
+    assert.equal(r.status, "needs_key");
     f.db.auth = true;
     r = await runtime.get({ deployment_id: r.deployment_id, wait_seconds: 3 });
     assert.equal(r.status, "started");

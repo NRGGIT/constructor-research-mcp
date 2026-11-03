@@ -211,13 +211,13 @@ test("create_folder creates missing parents and is idempotent", async () => {
   }
 });
 
-test("paths with traversal are rejected and expired cookies pause for auth", async () => {
+test("paths with traversal are rejected and a rejected key pauses for a new one", async () => {
   const x = await setup();
   try {
     await assert.rejects(sync(x, { remote_path: "../etc" }));
     await assert.rejects(sync(x, { local_path: "relative/path" }));
     x.db.auth = false;
-    await assert.rejects(sync(x), (e: any) => e.code === "needs_auth");
+    await assert.rejects(sync(x), (e: any) => e.code === "needs_key");
   } finally {
     await x.close();
   }

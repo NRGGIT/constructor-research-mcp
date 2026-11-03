@@ -2,16 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { platform, P, D, I } from "./platform.js";
-
-const jwt = (minutes: number) =>
-  "ap_access_token=eyJhbGciOiJIUzI1NiJ9." +
-  Buffer.from(
-    JSON.stringify({ exp: Math.floor(Date.now() / 1000 + minutes * 60) }),
-  ).toString("base64url") +
-  ".sig";
+import { platform, KEY, P, D, I } from "./platform.js";
+import { saveKeyFile } from "../src/key.js";
 
 async function connect(f: any) {
   const transport = new StdioClientTransport({
@@ -20,7 +14,7 @@ async function connect(f: any) {
     env: {
       PATH: process.env.PATH!,
       CONSTRUCTOR_BASE_URL: f.config.baseUrl,
-      CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+      CONSTRUCTOR_KEY_FILE: f.config.keyFile,
       CONSTRUCTOR_STATE_DIR: f.config.stateDir,
       CONSTRUCTOR_READINESS_SECONDS: "0",
       CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",
@@ -32,51 +26,41 @@ async function connect(f: any) {
   return client;
 }
 
-test("an expired token is caught locally with exact instructions; a nearly expired one blocks long work and warns", async () => {
+test("a missing or foreign key is caught locally with exact instructions; a key saved later works without a restart", async () => {
   const f = await platform();
   const client = await connect(f);
   try {
-    await writeFile(f.config.cookieFile, jwt(-5) + "\nBASE_URL=x\n");
-    const expired: any = await client.callTool({
+    await unlink(f.config.keyFile);
+    const missing: any = await client.callTool({
       name: "list_files",
       arguments: { project_id: P, desk_id: D },
     });
-    assert.equal(expired.structuredContent.status, "needs_auth");
-    assert.match(expired.structuredContent.message, /expired at/);
-    assert.ok(expired.structuredContent.message.includes(f.config.cookieFile));
+    assert.equal(missing.structuredContent.status, "needs_key");
     assert.match(
-      expired.structuredContent.message,
-      /constructor-research-set-token/,
+      missing.structuredContent.message,
+      /constructor-research-set-key http:\/\/127\.0\.0\.1:\d+.*Never ask the user to paste the key into the chat/,
     );
-    assert.equal(f.db.requests.length, 0, "nothing sent with an expired token");
+    assert.equal(f.db.keys.length, 0, "nothing sent without a key");
 
-    await writeFile(f.config.cookieFile, jwt(2));
-    const blocked: any = await client.callTool({
-      name: "create_folder",
-      arguments: { project_id: P, desk_id: D, path: "x" },
+    await saveKeyFile(f.config.keyFile, "https://other.constructor.app", KEY);
+    const foreign: any = await client.callTool({
+      name: "list_files",
+      arguments: { project_id: P, desk_id: D },
     });
-    assert.equal(blocked.structuredContent.status, "needs_auth");
-    assert.match(blocked.structuredContent.message, /too soon/);
+    assert.equal(foreign.structuredContent.status, "needs_key");
+    assert.match(
+      foreign.structuredContent.message,
+      /belongs to https:\/\/other/,
+    );
+    assert.ok(!JSON.stringify(foreign).includes(KEY));
+    assert.equal(f.db.keys.length, 0, "a key is never sent to another host");
+
+    await saveKeyFile(f.config.keyFile, f.config.baseUrl, KEY);
     const read: any = await client.callTool({
       name: "list_files",
       arguments: { project_id: P, desk_id: D },
     });
     assert.equal(read.isError, undefined);
-    assert.match(read.structuredContent.auth_warning, /expires in 1 min/);
-    // Checking on a deployment is not blocked while the token still works.
-    const check: any = await client.callTool({
-      name: "get_deployment",
-      arguments: { project_id: P },
-    });
-    assert.notEqual(check.structuredContent.status, "needs_auth");
-
-    // Half an hour left: fine for a listing, too little for a build.
-    await writeFile(f.config.cookieFile, jwt(30));
-    const listed: any = await client.callTool({
-      name: "list_files",
-      arguments: { project_id: P, desk_id: D },
-    });
-    assert.equal(listed.structuredContent.auth_warning, undefined);
     const deploy: any = await client.callTool({
       name: "deploy_app",
       arguments: {
@@ -92,42 +76,8 @@ test("an expired token is caught locally with exact instructions; a nearly expir
         ],
       },
     });
-    assert.match(
-      deploy.structuredContent.auth_warning,
-      /expires in 29 min; builds often take 10–30 min.*needs_auth/,
-    );
-
-    // A renewable session warns a day before it ends, not when the hour-long token runs low.
-    await writeFile(
-      f.config.cookieFile,
-      `${jwt(30)}; ap_refresh_token=refresh-0`.replace(
-        /\.([^.]+)\.sig/,
-        (_, p) =>
-          "." +
-          Buffer.from(
-            JSON.stringify({
-              ...JSON.parse(Buffer.from(p, "base64url").toString()),
-              max_slt: Math.floor(Date.now() / 1000) + 5 * 3600 + 60,
-            }),
-          ).toString("base64url") +
-          ".sig",
-      ),
-    );
-    const renewable: any = await client.callTool({
-      name: "list_files",
-      arguments: { project_id: P, desk_id: D },
-    });
-    assert.match(
-      renewable.structuredContent.auth_warning,
-      /login session ends in 5 h.*call the sign_in tool/,
-    );
-
-    await writeFile(f.config.cookieFile, jwt(60));
-    const fine: any = await client.callTool({
-      name: "list_files",
-      arguments: { project_id: P, desk_id: D },
-    });
-    assert.equal(fine.structuredContent.auth_warning, undefined);
+    assert.equal(deploy.isError, undefined);
+    assert.equal(deploy.structuredContent.auth_warning, undefined);
   } finally {
     await client.close();
     await f.close();

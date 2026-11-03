@@ -1,11 +1,11 @@
 # Install the Constructor Research MCP
 
-The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as acme.constructor.app. It runs on your machine as a local MCP server, installed from npm. Each tool signs in to Constructor once, with its own session.
+The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as acme.constructor.app. It runs on your machine as a local MCP server, installed from npm, and works with your personal Constructor access key.
 
 ## What you need
 
 - Node.js 22 or later ([nodejs.org](https://nodejs.org), or `nvm install 22`)
-- Chrome, Edge, Chromium or Brave, for signing in
+- a personal access key (`rk-…`) for your Constructor
 - macOS, Windows or Linux
 
 ## 1. Add it to your tool
@@ -13,19 +13,19 @@ The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research:
 **Claude Code**: run once:
 
 ```sh
-claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@latest
+claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 On Windows (not WSL), use this instead:
 
 ```bat
-claude mcp add --scope user constructor-research -- cmd /c npx -y constructor-research-mcp@latest
+claude mcp add --scope user constructor-research -- cmd /c npx -y constructor-research-mcp@beta
 ```
 
 **Codex**: run once:
 
 ```sh
-codex mcp add constructor-research -- npx -y constructor-research-mcp@latest
+codex mcp add constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 The first start downloads the package and can exceed Codex's 10-second start limit. If Codex reports a timeout, restart it once, or add `startup_timeout_sec = 60` under `[mcp_servers.constructor-research]` in `~/.codex/config.toml`. The full entry, if you prefer to write it by hand:
@@ -33,7 +33,7 @@ The first start downloads the package and can exceed Codex's 10-second start lim
 ```toml
 [mcp_servers.constructor-research]
 command = "npx"
-args = ["-y", "constructor-research-mcp@latest"]
+args = ["-y", "constructor-research-mcp@beta"]
 startup_timeout_sec = 60
 tool_timeout_sec = 30
 ```
@@ -41,13 +41,13 @@ tool_timeout_sec = 30
 **OpenCode**: run once; it adds the entry to your OpenCode config and keeps what is already there. Check your version with `opencode --version`. OpenCode 2.x:
 
 ```sh
-opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@latest
+opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 Without `--global`, OpenCode 2.x adds it to the current folder's project config instead. OpenCode 1.x has no `--global` and writes to your user config when run outside a project:
 
 ```sh
-opencode mcp add constructor-research -- npx -y constructor-research-mcp@latest
+opencode mcp add constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 Or add it by hand to `~/.config/opencode/opencode.json` (or a project's `opencode.json`). This is the 1.x layout; in 2.x the entry goes one level deeper, under `mcp.servers`, as in [examples/opencode-v2.json](examples/opencode-v2.json):
@@ -58,22 +58,25 @@ Or add it by hand to `~/.config/opencode/opencode.json` (or a project's `opencod
   "mcp": {
     "constructor-research": {
       "type": "local",
-      "command": ["npx", "-y", "constructor-research-mcp@latest"]
+      "command": ["npx", "-y", "constructor-research-mcp@beta"]
     }
   }
 }
 ```
 
-Do not put a token or cookie file in these settings; sign-in is handled by the MCP.
+Do not put the key in these settings unless you have to; the next step saves it where every tool finds it.
 
-## 2. Restart and sign in
+## 2. Save your access key
 
-1. Restart the tool, or run `/mcp` in Claude Code, so it starts the MCP. The first start downloads it and can take a minute.
-2. Ask the agent to sign in. If your Constructor is not constructor.app, give its address, for example "sign in to Constructor at https://acme.constructor.app". A desk link from it works too.
-3. The agent says a sign-in window will open and calls `sign_in`. A separate browser window opens at your Constructor's sign-in page.
-4. Sign in. The window closes by itself.
+In a terminal, run this with your Constructor's address and paste the key when asked (it is not shown):
 
-The MCP then works with the Constructor you signed in to; to switch, ask the agent to sign in to the other one. The session is saved for that tool only, in `~/.config/constructor-research/sessions/<tool>.txt`, and renewed automatically for 14 days. A day before it ends, the agent asks you to sign in again.
+```sh
+npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acme.constructor.app
+```
+
+It checks the key with Constructor and saves it, with that address, to `~/.config/constructor-research/access-key.json` (readable only by you). Claude Code, Codex and OpenCode all use this one key, and the MCP works with that Constructor. To switch Constructor or replace a revoked key, run it again. Never paste the key into the chat.
+
+Then restart the tool, or run `/mcp` in Claude Code, so it starts the MCP. The first start downloads it and can take a minute.
 
 ## 3. Optional: get told when a deployment finishes
 
@@ -85,7 +88,7 @@ Builds can take many minutes. These add-ons wake the agent when a deployment it 
 
 ## Update
 
-Restart the tool (or `/mcp` in Claude Code): `@latest` fetches the newest version on start. Your sign-in is kept.
+Restart the tool (or `/mcp` in Claude Code): `@beta` fetches the newest beta on start. Your key is kept.
 
 ## Troubleshooting
 
@@ -95,18 +98,14 @@ Restart the tool (or `/mcp` in Claude Code): `@latest` fetches the newest versio
 which npx
 ```
 
-**`sign_in` says no browser was found.** Set `CONSTRUCTOR_BROWSER` in the MCP settings to the browser's executable.
+**A tool returns `needs_key`.** No key is saved, or Constructor rejected it (revoked or expired). Save a new one with the command in step 2.
 
-**No screen (a remote Linux machine).** In the browser on your own machine, open Constructor, then DevTools → Network → right-click a request → Copy as cURL. Save it to a file and run (with `codex` or `opencode` in place of `claude-code` for those tools):
-
-```sh
-npx -y -p constructor-research-mcp constructor-research-set-token <file> --for claude-code
-```
+**`set-key` says the address answered an HTTP error.** That Constructor may not have the public API yet, or you are off the VPN it needs.
 
 **Check the MCP on its own.** Run the MCP Inspector, then turn on the server's toggle and open Tools:
 
 ```sh
-npx @modelcontextprotocol/inspector@2.11.0 -- npx -y constructor-research-mcp@latest
+npx @modelcontextprotocol/inspector@2.11.0 -- npx -y constructor-research-mcp@beta
 ```
 
 ## Uninstall
@@ -117,7 +116,7 @@ Remove `constructor-research` from your tool's settings. In Claude Code:
 claude mcp remove constructor-research --scope user
 ```
 
-To remove your data too, delete the sign-in sessions and deployment progress:
+To remove your data too, delete the saved key and deployment progress:
 
 ```sh
 rm -rf ~/.config/constructor-research ~/.local/state/constructor-research-mcp

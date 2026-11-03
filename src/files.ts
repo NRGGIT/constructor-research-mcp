@@ -652,7 +652,7 @@ export class FileManager {
       } catch (err) {
         if (
           err instanceof ToolError &&
-          ["needs_auth", "connection_error"].includes(err.code)
+          ["needs_key", "connection_error"].includes(err.code)
         ) {
           stop ??= err;
           remaining++;

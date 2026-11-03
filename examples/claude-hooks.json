@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y -p constructor-research-mcp constructor-research-wait --hook claude-code",
+            "command": "npx -y -p constructor-research-mcp@beta constructor-research-wait --hook claude-code",
             "asyncRewake": true
           }
         ]

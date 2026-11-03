@@ -281,7 +281,7 @@ export class DeploymentEngine {
           remote_path: source.remote_path ?? "",
         });
       } catch (err) {
-        if (err instanceof ToolError && err.code === "needs_auth") throw err;
+        if (err instanceof ToolError && err.code === "needs_key") throw err;
       }
     if (this.files) {
       const pre = await this.files.preflight(op.project_id!, [
@@ -673,8 +673,7 @@ export class DeploymentEngine {
               }),
             }));
           } catch (err) {
-            if (err instanceof ToolError && err.code === "needs_auth")
-              throw err;
+            if (err instanceof ToolError && err.code === "needs_key") throw err;
             row.error =
               err instanceof ToolError
                 ? err.message
@@ -834,8 +833,8 @@ export class DeploymentEngine {
       if (!(err instanceof ToolError)) throw err;
       if (err.code === "invalid_input") throw err;
       op.status =
-        err.code === "needs_auth"
-          ? "needs_auth"
+        err.code === "needs_key"
+          ? "needs_key"
           : err.code === "uncertain_outcome"
             ? "needs_reconciliation"
             : err.code === "connection_error" || err.code === "not_ready"
@@ -845,7 +844,10 @@ export class DeploymentEngine {
         op.status === "failed"
           ? `${err.message} Please check the logs in Constructor.`
           : err.message;
-      if (op.status === "failed") {
+      if (err.code === "deployment_disabled") {
+        op.failure = { stage: "prepare" };
+        op.message = err.message;
+      } else if (op.status === "failed") {
         op.failure = op.action ?? {
           stage: op.kind === "build" ? "build" : "deployment",
         };
@@ -861,6 +863,29 @@ export class DeploymentEngine {
       return this.view(op);
     }
   }
+  /** Switches on deployment; when the key may not, the operation stops with what to do instead. */
+  private async enableDeployment(op: Operation, project: string) {
+    try {
+      await this.mutate(
+        op,
+        "PATCH",
+        this.root(project),
+        { deployment_enabled: true },
+        () => {
+          op.status = "preparing";
+        },
+      );
+    } catch (err) {
+      if (err instanceof ToolError && err.status === 403)
+        throw new ToolError(
+          "deployment_disabled",
+          "Deployment is switched off for this project, and the access key may not switch it on. Ask the user to switch on deployment for the project in Constructor, then repeat the same call.",
+          403,
+          err.apiCode,
+        );
+      throw err;
+    }
+  }
   private async advanceBuild(op: Operation) {
     const i = op.input;
     await this.project(i.project_id);
@@ -868,15 +893,7 @@ export class DeploymentEngine {
     if (!op.images.image) {
       const p = await this.project(i.project_id);
       if (!p.deployment_enabled) {
-        await this.mutate(
-          op,
-          "PATCH",
-          this.root(i.project_id),
-          { deployment_enabled: true },
-          () => {
-            op.status = "preparing";
-          },
-        );
+        await this.enableDeployment(op, i.project_id);
         return this.view(op);
       }
       if (await this.settling(op, i.desk_id)) return this.view(op);
@@ -1099,15 +1116,7 @@ export class DeploymentEngine {
       return this.view(op);
     }
     if (!project.deployment_enabled) {
-      await this.mutate(
-        op,
-        "PATCH",
-        this.root(op.project_id),
-        { deployment_enabled: true },
-        () => {
-          op.status = "preparing";
-        },
-      );
+      await this.enableDeployment(op, op.project_id);
       return this.view(op);
     }
     const builds = services.filter((s) => s.build);
@@ -1421,8 +1430,8 @@ export class DeploymentEngine {
           ? "Tell the user which stage/service failed and pass on the message. failure.log_tail has the last log lines when the MCP captured them; get_logs shows more. Do not use browser or other tools to investigate."
           : terminal.has(op.status)
             ? undefined
-            : op.status === "needs_auth"
-              ? `${this.api.authHelp("The token expired or is invalid.")} Then call get_deployment with this deployment_id.`
+            : op.status === "needs_key"
+              ? `${this.api.keyHelp("Constructor rejected the access key, or none is set.")} Then call get_deployment with this deployment_id.`
               : op.status === "needs_upload"
                 ? "Upload files with sync_files, then call get_deployment with files_uploaded=true."
                 : "Execution continues automatically in the MCP. Keep calling get_deployment with wait_seconds=20 until it is finished, then tell the user the result; do not orchestrate individual steps.",

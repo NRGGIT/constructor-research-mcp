@@ -43,7 +43,7 @@ async function connect(f: any) {
     env: {
       PATH: process.env.PATH!,
       CONSTRUCTOR_BASE_URL: f.config.baseUrl,
-      CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+      CONSTRUCTOR_KEY_FILE: f.config.keyFile,
       CONSTRUCTOR_STATE_DIR: f.config.stateDir,
       CONSTRUCTOR_READINESS_SECONDS: "0",
       CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",

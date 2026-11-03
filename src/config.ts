@@ -3,16 +3,17 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 export interface Config {
-  /** The Constructor the MCP works with: the signed-in one, unless CONSTRUCTOR_BASE_URL fixes it. */
+  /** The Constructor the MCP works with: CONSTRUCTOR_BASE_URL, else the one the saved key belongs to. */
   baseUrl: string;
   baseUrlFixed?: boolean;
   apiPath: string;
   storagePath?: string;
   /** Build-log service root; build logs stream only while a build runs. */
   keeperPath?: string;
-  /** Session file; each harness gets its own unless CONSTRUCTOR_COOKIE_FILE fixes one. */
-  cookieFile: string;
-  cookieFileFixed?: boolean;
+  /** Personal access key (rk-…) from CONSTRUCTOR_ACCESS_KEY; without it the key file is read. */
+  accessKey?: string;
+  /** Saved key and the Constructor it belongs to (JSON, mode 600); CONSTRUCTOR_KEY_FILE moves it. */
+  keyFile: string;
   stateDir: string;
   requestTimeoutMs: number;
   /** How long to wait for public URLs to answer after start; 0 disables the check. */
@@ -20,7 +21,7 @@ export interface Config {
   /** Pause between uploading to a disk and building from it; 0 disables. */
   uploadSettleSeconds?: number;
 }
-/** Where the MCP works until the user signs in somewhere else. */
+/** Where the MCP works unless CONSTRUCTOR_BASE_URL or the saved key names another Constructor. */
 export const DEFAULT_BASE_URL = "https://constructor.app";
 /** The origin of a Constructor link; HTTPS except on localhost. */
 export function originOf(link: string) {
@@ -52,7 +53,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
       );
   }
   const baseUrl = originOf(fixed ?? DEFAULT_BASE_URL);
-  const apiPath = env.CONSTRUCTOR_API_PATH ?? "/api/platform-account";
+  const apiPath = env.CONSTRUCTOR_API_PATH ?? "/api/platform-account/v1";
   if (!/^\/[a-zA-Z0-9/_-]+$/.test(apiPath) || apiPath.includes("//"))
     throw new Error("Invalid CONSTRUCTOR_API_PATH.");
   const storagePath = env.CONSTRUCTOR_STORAGE_PATH ?? "/api/platform-storage";
@@ -69,10 +70,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     apiPath: apiPath.replace(/\/$/, ""),
     storagePath: storagePath.replace(/\/$/, ""),
     keeperPath: keeperPath.replace(/\/$/, ""),
-    cookieFile: env.CONSTRUCTOR_COOKIE_FILE
-      ? expand(env.CONSTRUCTOR_COOKIE_FILE)
-      : sessionFile("default"),
-    cookieFileFixed: !!env.CONSTRUCTOR_COOKIE_FILE,
+    accessKey: env.CONSTRUCTOR_ACCESS_KEY?.trim() || undefined,
+    keyFile: expand(env.CONSTRUCTOR_KEY_FILE ?? DEFAULT_KEY_FILE),
     stateDir: expand(
       env.CONSTRUCTOR_STATE_DIR ?? "~/.local/state/constructor-research-mcp",
     ),
@@ -88,50 +87,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
   };
 }
 
-/** Harnesses with their own session: one sign-in each, nothing shared between them. */
-export const HARNESSES = ["claude-code", "codex", "opencode"] as const;
-/** The harness behind an MCP client name (from the initialize handshake). */
-export function harnessOf(client?: string) {
-  const name = (client ?? "").toLowerCase();
-  if (name.includes("claude")) return "claude-code";
-  if (name.includes("codex")) return "codex";
-  if (name.includes("opencode")) return "opencode";
-  return name.replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "") || "default";
-}
-/** Where a harness's Constructor session is kept (mode 600). */
-export function sessionFile(harness: string) {
-  return join(
-    homedir(),
-    ".config",
-    "constructor-research",
-    "sessions",
-    `${harness}.txt`,
-  );
-}
-
-/**
- * Session file named on a command line: --for <harness> or --to <file>; without either,
- * CONSTRUCTOR_COOKIE_FILE. Returns the remaining arguments too.
- */
-export function sessionArgs(args: string[], config: Config) {
-  const value = (flag: string) => {
-    const i = args.indexOf(flag);
-    return i >= 0 ? args[i + 1] : undefined;
-  };
-  const to = value("--to"),
-    harness = value("--for");
-  const rest = args.filter(
-    (_, n) =>
-      !["--to", "--for"].includes(args[n]) &&
-      !["--to", "--for"].includes(args[n - 1]),
-  );
-  if (to) return { file: resolve(to), rest };
-  if (harness && (HARNESSES as readonly string[]).includes(harness))
-    return { file: sessionFile(harness), rest };
-  if (!harness && config.cookieFileFixed)
-    return { file: config.cookieFile, rest };
-  return { file: undefined, rest };
-}
+/** Where constructor-research-set-key saves the key; the MCP and the wait command read it. */
+export const DEFAULT_KEY_FILE =
+  "~/.config/constructor-research/access-key.json";
 
 const quote = (s: string) =>
   /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
@@ -139,7 +97,8 @@ const quote = (s: string) =>
 export function waitCommand(config: Config, ids: string[]) {
   const defaults = configFromEnv({});
   const env = [
-    // The wait command reads the host from the session, as the MCP does, unless it is fixed.
+    // The wait command reads the host from the key file, as the MCP does, unless it is fixed.
+    // The key itself never goes into a command line: CONSTRUCTOR_ACCESS_KEY stays in the environment.
     [
       "CONSTRUCTOR_BASE_URL",
       config.baseUrlFixed ? config.baseUrl : undefined,
@@ -148,7 +107,7 @@ export function waitCommand(config: Config, ids: string[]) {
     ["CONSTRUCTOR_API_PATH", config.apiPath, defaults.apiPath],
     ["CONSTRUCTOR_STORAGE_PATH", config.storagePath, defaults.storagePath],
     ["CONSTRUCTOR_KEEPER_PATH", config.keeperPath, defaults.keeperPath],
-    ["CONSTRUCTOR_COOKIE_FILE", config.cookieFile, defaults.cookieFile],
+    ["CONSTRUCTOR_KEY_FILE", config.keyFile, defaults.keyFile],
     ["CONSTRUCTOR_STATE_DIR", config.stateDir, defaults.stateDir],
   ]
     .filter(([, value, standard]) => value !== standard)

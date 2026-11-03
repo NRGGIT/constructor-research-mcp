@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **Beta (0.4.0-beta):** works only with Constructor's public API and a personal access key (`rk-…`); there is no browser sign-in. The public API is not yet on every Constructor. Install with `@beta`; `@latest` is still 0.3.x with browser sign-in.
+
 Local stdio MCP for Codex CLI, Claude Code and OpenCode. Submit the whole application once; the MCP builds images, connects services, configures them and starts them. The agent supplies missing configuration and reports the result.
 
 ## Install
@@ -9,76 +11,59 @@ You need Node.js 22+. Then add the MCP to your tool.
 **Claude Code**
 
 ```sh
-claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@latest
+claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 **Codex**
 
 ```sh
-codex mcp add constructor-research -- npx -y constructor-research-mcp@latest
+codex mcp add constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 **OpenCode 2.x**
 
 ```sh
-opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@latest
+opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
 **OpenCode 1.x** (no `--global` there):
 
 ```sh
-opencode mcp add constructor-research -- npx -y constructor-research-mcp@latest
+opencode mcp add constructor-research -- npx -y constructor-research-mcp@beta
 ```
 
-Then restart the tool and ask the agent anything about Constructor; it signs you in through the `sign_in` tool on first use. Windows notes, the optional wake-up hooks and troubleshooting are in [INSTALL.md](INSTALL.md). Restarting the tool picks up a new version.
+Then save your personal access key (see below), restart the tool and ask the agent anything about Constructor. Windows notes, the optional wake-up hooks and troubleshooting are in [INSTALL.md](INSTALL.md). Restarting the tool picks up a new version.
 
-## Authentication and connection
+## Access key and connection
 
-Each harness signs in once and keeps its own Constructor session; nothing is stored centrally and nothing goes in the MCP settings. When a tool returns `needs_auth`, the agent tells the user a sign-in window is about to open and calls `sign_in`:
-
-1. The MCP opens a separate browser window (Chrome, Edge, Chromium or Brave, on macOS, Windows or Linux; `CONSTRUCTOR_BROWSER` names another executable) with a fresh temporary profile at the Constructor sign-in page.
-2. The user signs in. The MCP reads the session cookies, closes the window itself and deletes the profile.
-3. It saves `ap_access_token`, `ap_id_token` and `ap_refresh_token` to that harness's session file and answers `signed_in`. No token is ever returned or printed.
-
-The MCP works with one Constructor at a time: the one the user signed in to, recorded as a `host=` line in the session file. Before the first sign-in it is `https://constructor.app`, or the host of a desk link the user gave. For another Constructor (for example `https://acme.constructor.app`), the agent passes any link from it as `sign_in`'s `url`; the new sign-in replaces the old one, and the MCP works there from then on. A desk link from a different Constructor than the signed-in one returns `wrong_environment`, which tells the agent to sign in there with that link.
-
-`sign_in` waits up to `wait_seconds` (default 20, so it stays within short harness tool timeouts); while the user is still signing in it returns `sign_in_pending`, and calling it again waits on the same window. With a renewable session already saved it answers `signed_in` without opening anything (`force=true` signs in again).
-
-The harness is recognised from the client name in the MCP handshake; its session file is `~/.config/constructor-research/sessions/<harness>.txt` (`claude-code`, `codex`, `opencode`; another client gets its own name), mode 600. Separate windows matter because a refresh token works once: two holders of one session would log each other out by renewing. Several sessions of the same harness share its file safely (below).
-
-The access token lasts an hour. When it has under 10 minutes left, the next request first renews it: `GET /auth/session` with only the refresh token, which answers with new tokens that are saved at once. Renewal runs under `<session file>.lock`, so processes sharing a file renew once and the others use the saved tokens. Requests send only the access token, so the gateway never renews behind the MCP's back. The server allows renewal until the `max_slt` claim, 14 days after sign-in; from a day before that, every response carries `auth_warning` asking the agent to have the user sign in again. If the refresh token was already used elsewhere, it is dropped and, once the access token expires, `needs_auth` explains why. A session is never sent to a Constructor other than the one it was signed in to.
-
-The same sign-in from a terminal (use `codex` or `opencode` in place of `claude-code`, or `--to <file>`; `--url` names a Constructor other than constructor.app):
+The MCP uses only a personal access key (`rk-…`) from Constructor's public API; there is no browser sign-in. Every request carries it as `X-Research-AccessKey: Bearer rk-…`, to the account API (`/api/platform-account/v1`), the desk storage (WebDAV) and the logs alike. The key never goes through the chat: the user saves it in a terminal, where it is read hidden, checked against Constructor and saved:
 
 ```sh
-npx -y -p constructor-research-mcp constructor-research-login --for claude-code
-npx -y -p constructor-research-mcp constructor-research-login --url https://acme.constructor.app --for claude-code
+npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acme.constructor.app
 ```
 
-On a machine without a screen (Linux without `DISPLAY`/`WAYLAND_DISPLAY`), `sign_in` says so; save a session from a copied cURL (DevTools → Network → Copy as cURL) instead:
+It goes to `~/.config/constructor-research/access-key.json` (mode 600) together with the Constructor it belongs to, and the MCP works with that Constructor. All harnesses (Claude Code, Codex, OpenCode) and the wait command share this one file. Every request rereads it, so a new key needs no restart. A key is never sent to a Constructor other than the one it was saved for.
 
-```sh
-npx -y -p constructor-research-mcp constructor-research-set-token capture.txt --for codex
-```
+Instead of the file, `CONSTRUCTOR_ACCESS_KEY` (with `CONSTRUCTOR_BASE_URL`) can be set in the MCP settings; it takes precedence. The wait hooks do not see the MCP settings, so with this option they need the same variables in their own environment.
 
-The session belongs to the Constructor the cURL was sent to. It keeps the refresh token when the cURL has one (and warns that the browser it came from shares that session), and prints the expiry, never a token. A plain access token, without a refresh token, cannot be renewed and expires after an hour: under 3 minutes left, operations that change anything are refused (`get_deployment` still works); under 10 minutes every response carries `auth_warning`, and `deploy_app`/`update_app`/`build_image` warn from 40 minutes, because a build can outlast the token.
+Without a key, or when Constructor rejects it (401: revoked, expired or for another Constructor), tools return `needs_key` with the command above; a deployment pauses as `needs_key` and resumes on the next check once a valid key is saved. A desk link from another Constructor returns `wrong_environment`.
 
-`CONSTRUCTOR_COOKIE_FILE` pins one session file for every harness instead (for scripts and tests). Every request rereads the session file, so a new sign-in needs no restart.
+Deployment must be switched on for the project. If it is off and the key may not switch it on (403), the operation fails at stage `prepare` with a message asking the user to switch it on in Constructor.
 
-| Variable                            | Default                                                                                  |
-| ----------------------------------- | ---------------------------------------------------------------------------------------- |
-| `CONSTRUCTOR_BASE_URL`              | unset: the signed-in Constructor, else `https://constructor.app`; set, it fixes the host |
-| `CONSTRUCTOR_API_PATH`              | `/api/platform-account`                                                                  |
-| `CONSTRUCTOR_STORAGE_PATH`          | `/api/platform-storage`                                                                  |
-| `CONSTRUCTOR_COOKIE_FILE`           | unset: `~/.config/constructor-research/sessions/<harness>.txt`                           |
-| `CONSTRUCTOR_BROWSER`               | first Chrome, Edge, Chromium or Brave found                                              |
-| `CONSTRUCTOR_STATE_DIR`             | `~/.local/state/constructor-research-mcp`                                                |
-| `CONSTRUCTOR_UPLOAD_SETTLE_SECONDS` | `30`                                                                                     |
-| `CONSTRUCTOR_READINESS_SECONDS`     | `60`                                                                                     |
+| Variable                            | Default                                                                                         |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `CONSTRUCTOR_BASE_URL`              | unset: the Constructor of the saved key, else `https://constructor.app`; set, it fixes the host |
+| `CONSTRUCTOR_API_PATH`              | `/api/platform-account/v1`                                                                      |
+| `CONSTRUCTOR_STORAGE_PATH`          | `/api/platform-storage`                                                                         |
+| `CONSTRUCTOR_ACCESS_KEY`            | unset: the key file is used                                                                     |
+| `CONSTRUCTOR_KEY_FILE`              | `~/.config/constructor-research/access-key.json`                                                |
+| `CONSTRUCTOR_STATE_DIR`             | `~/.local/state/constructor-research-mcp`                                                       |
+| `CONSTRUCTOR_UPLOAD_SETTLE_SECONDS` | `30`                                                                                            |
+| `CONSTRUCTOR_READINESS_SECONDS`     | `60`                                                                                            |
 
-HTTPS is required except on localhost. API-key authentication is not implemented yet.
+HTTPS is required except on localhost.
 
-## Fourteen tools
+## Thirteen tools
 
 | Tool                     | Agent's task                                                                        |
 | ------------------------ | ----------------------------------------------------------------------------------- |
@@ -90,13 +75,12 @@ HTTPS is required except on localhost. API-key authentication is not implemented
 | `build_image`            | Build an image independently when needed.                                           |
 | `list_images`            | List image IDs, Dockerfiles and native build statuses.                              |
 | `list_files`             | List a disk's files and folders; `recursive:true` walks subfolders.                 |
-| `sign_in`                | Open a sign-in window for the user when a tool returns `needs_auth`.                |
 | `create_folder`          | Create a disk folder, including missing parents.                                    |
 | `sync_files`             | Upload new and changed files; asks once before replacing existing files.            |
 | `move_path`              | Rename or move files/folders in one batch, approved once; never overwrites.         |
 | `delete_path`            | Delete files/folders in one batch; reports first, deletes only with `confirm:true`. |
 
-No special clone/new-instance workflow is implemented. The fourteen tools use the same standard MCP transport across harnesses.
+No special clone/new-instance workflow is implemented. The thirteen tools use the same standard MCP transport across harnesses.
 
 ## Where to act: the desk link
 
@@ -106,7 +90,7 @@ The agent does not choose a project or desk. It asks the user for the desk link:
 https://constructor.app/research/projects/<project_id>/desks/<desk_id>/viewer/file
 ```
 
-Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the signed-in Constructor; a link from another one returns `wrong_environment` (see sign-in above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
+Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the Constructor the key belongs to; a link from another one returns `wrong_environment` (see the access key above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
 
 ## Normal deployment flow
 
@@ -187,7 +171,7 @@ Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building. `list
 
 ## Missing prerequisites
 
-- **No/expired token:** `needs_auth` with the file and format to use (see Authentication). Replace the token, then check the same deployment again.
+- **No or rejected key:** `needs_key` with the command to save one (see Access key). Save a valid key, then check the same deployment again.
 - **No project/disk:** omit `project_id`, optionally supply `project_name`, and use build sources without disk IDs. MCP creates the project/disk and enables deployment tools.
 - **Files absent:** `needs_upload` lists disks and Dockerfile paths. Upload with `sync_files` (or manually), then call `get_deployment` with `deployment_id` and `files_uploaded:true`.
 
@@ -234,11 +218,11 @@ Learned from live runs (28 Oct 2026):
 
 ## State and recovery
 
-Progress and sanitized results are checkpointed. Configuration secrets remain in owner-only local checkpoint files (`0600`, directory `0700`); tool responses return environment-variable names, never values. Cookies are not checkpointed. Do not commit credentials or state.
+Progress and sanitized results are checkpointed. Configuration secrets remain in owner-only local checkpoint files (`0600`, directory `0700`); tool responses return environment-variable names, never values. The access key is not checkpointed. Do not commit credentials or state.
 
 Checkpoints are bound to the API endpoint. A shared state directory coordinates local harnesses. `resume:false` on `get_deployment` observes without scheduling execution or confirming uploads; already running background work is not paused.
 
-Terminal states: `built`, `started`, `stopped`, `failed`, `needs_reconciliation`, `superseded`. A new `update_app`, `start_app` or `stop_app` for an application ends that application's unfinished deployments as `superseded`, so an older one cannot apply its images after the newer one; its builds keep running on Constructor but are not used. The new result lists them in `replaced`, with the services they were changing that the new update leaves out. User-action pauses: `needs_auth`, `needs_upload`. Other statuses indicate background progress. An executor stops after one hour rather than retrying forever.
+Terminal states: `built`, `started`, `stopped`, `failed`, `needs_reconciliation`, `superseded`. A new `update_app`, `start_app` or `stop_app` for an application ends that application's unfinished deployments as `superseded`, so an older one cannot apply its images after the newer one; its builds keep running on Constructor but are not used. The new result lists them in `replaced`, with the services they were changing that the new update leaves out. User-action pauses: `needs_key`, `needs_upload`. Other statuses indicate background progress. An executor stops after one hour rather than retrying forever.
 
 For `needs_reconciliation`, inspect the possible remote mutation before submitting a new operation. The server never blindly repeats an uncertain create. A `.lock` left by a process that no longer exists (a server killed or restarted mid-step) is removed automatically on the next operation; a lock held by a live process returns `busy`. Checkpoints remain available. No rollback or resource deletion is automated.
 
@@ -256,10 +240,10 @@ Constructor serves logs only live, as a stream: a build log while the build runs
 
 ## Waiting for long builds
 
-Builds can run for many minutes. The MCP keeps executing in the background, but an agent that has ended its turn is not told when they finish. `dist/wait.js` (bin `constructor-research-wait`) blocks until the given deployments, or all in-progress ones when no ID is given, finish, and prints one line each: status, message, services with public URLs, next step. Exit codes: `0` finished, `2` needs the user (failed, token, upload, volume confirmation), `3` still running at `--max-minutes` (default 60), `4` nothing in progress.
+Builds can run for many minutes. The MCP keeps executing in the background, but an agent that has ended its turn is not told when they finish. `dist/wait.js` (bin `constructor-research-wait`) blocks until the given deployments, or all in-progress ones when no ID is given, finish, and prints one line each: status, message, services with public URLs, next step. Exit codes: `0` finished, `2` needs the user (failed, key, upload, volume confirmation), `3` still running at `--max-minutes` (default 60), `4` nothing in progress.
 
 ```sh
-npx -y -p constructor-research-mcp constructor-research-wait <deployment_id>
+npx -y -p constructor-research-mcp@beta constructor-research-wait <deployment_id>
 ```
 
 It watches the checkpoints the MCP writes. For deployments named by ID, if no process has advanced one for a minute (the MCP was closed), it continues it itself, exactly as the MCP would on restart. Without IDs it only watches, since those deployments may belong to other sessions. While a deployment runs, `next_action` gives the agent the exact command, including the MCP's non-default `CONSTRUCTOR_*` settings; the wait command needs the same settings as the MCP.
@@ -287,7 +271,7 @@ Use the executable directly to keep stdout reserved for MCP. `structuredContent`
 
 ## Disk files
 
-The tools use the disk's WebDAV storage (`/api/platform-storage/desks/{disk}/dav/project/`) with the same cookie. `sync_files`:
+The tools use the disk's WebDAV storage (`/api/platform-storage/desks/{disk}/dav/project/`) with the same key. `sync_files`:
 
 - compares each local file with the disk by size, then by the server's SHA-256 checksum; only new and changed files are sent, and nothing is deleted;
 - uploads new files and creates folders without asking; if existing files would be replaced, it uploads nothing and returns `confirm_required` with the whole plan, to be approved once and repeated with `confirm:true`; `dry_run:true` only previews;

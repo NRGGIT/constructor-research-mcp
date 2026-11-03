@@ -241,9 +241,9 @@ export class LogFollower {
         // A closed stream means the build ended or a proxy cut it; reopening tells which.
       } catch (err) {
         if (signal.aborted) return;
-        if (err instanceof ToolError && err.code === "needs_auth") {
+        if (err instanceof ToolError && err.code === "needs_key") {
           log.error =
-            "The token expired while following this build log; the lines below may be incomplete.";
+            "Constructor rejected the access key while following this build log; the lines below may be incomplete.";
           return;
         }
         if (++failures > 8) {

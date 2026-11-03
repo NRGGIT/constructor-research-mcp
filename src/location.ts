@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ToolError } from "./api.js";
+import { VERSION } from "./config.js";
 import { id, deskUrl } from "./schemas.js";
 
 /** Where a tool acts: a desk (project + desk), a project only, or a deployment-shaped input whose schema already allows a missing project_id. */
@@ -55,7 +56,7 @@ export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
       "wrong_environment",
       fixed
         ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL. Ask the user for a link from ${base}.`
-        : `The link is for ${url.origin}, but the user is signed in to ${base}. If they work on ${url.origin}, tell them a sign-in window is about to open, then call sign_in with url set to this link; that replaces the sign-in to ${base}.`,
+        : `The link is for ${url.origin}, but the saved access key is for ${base}. If they work on ${url.origin}, the user saves a key for it in a terminal (it replaces the key for ${base}): npx -y -p constructor-research-mcp@${VERSION} constructor-research-set-key ${url.origin}. Never ask for the key in the chat.`,
     );
   return { project_id: m[1], desk_id: m[2] };
 }

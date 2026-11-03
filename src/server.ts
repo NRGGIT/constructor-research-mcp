@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { configFromEnv, originOf, VERSION } from "./config.js";
+import { configFromEnv, VERSION } from "./config.js";
 import { PlatformApi, ToolError } from "./api.js";
 import { StateStore } from "./store.js";
-import { DeploymentEngine, terminal } from "./deployment.js";
+import { DeploymentEngine } from "./deployment.js";
 import { DeploymentRuntime } from "./runtime.js";
 import { FileManager, dockerignore, type BuildSource } from "./files.js";
 import { basename } from "node:path";
@@ -27,11 +27,7 @@ import {
   syncFilesInput,
   movePathInput,
   deletePathInput,
-  signInInput,
 } from "./schemas.js";
-import { harnessOf, sessionFile } from "./config.js";
-import { sessionHost } from "./session.js";
-import { signIn, type SignInResult } from "./signin.js";
 
 async function main() {
   const config = configFromEnv();
@@ -152,7 +148,7 @@ async function main() {
   const server = new McpServer(
     { name: "constructor-research", version: VERSION },
     {
-      instructions: `Sign-in: the MCP works with one Constructor, https://constructor.app unless the user signed in to another. When the user asks to sign in, or names their Constructor or gives a link from it (e.g. https://acme.constructor.app), call sign_in with url set to that link. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project or desk yourself; if the user has not said where to deploy or where files live, ask. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+      instructions: `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project or desk yourself; if the user has not said where to deploy or where files live, ask. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
     },
   );
   const register = (
@@ -179,34 +175,8 @@ async function main() {
       },
       async (args: any) => {
         try {
-          await api.followSession();
-          // Nobody signed in yet: a desk link names the Constructor to sign in to.
-          if (
-            args?.desk_url &&
-            !config.baseUrlFixed &&
-            !(await sessionHost(config.cookieFile))
-          )
-            try {
-              api.aimed = config.baseUrl = originOf(args.desk_url);
-            } catch {}
-          // Do not start a change on a token about to expire; checking on a deployment is still fine.
-          const before = await api.authLeft().catch(() => undefined);
-          const what = (renewable: boolean) =>
-            renewable ? "The login session ends" : "The token expires";
-          if (
-            !readOnly &&
-            name !== "get_deployment" &&
-            name !== "sign_in" &&
-            before !== undefined &&
-            before.minutes < 3
-          )
-            throw new ToolError(
-              "needs_auth",
-              api.authHelp(
-                `${what(before.renewable)} in ${Math.max(0, Math.floor(before.minutes))} min, too soon to start this operation.`,
-              ),
-            );
-          let result = await api.withBudget(budget, () =>
+          await api.refresh();
+          const result = await api.withBudget(budget, () =>
             fn(
               scope
                 ? resolveDeskUrl(
@@ -218,26 +188,6 @@ async function main() {
                 : args,
             ),
           );
-          const left = await api.authLeft().catch(() => undefined);
-          // A build can take half an hour; warn while there is still time to sign in again.
-          // A renewable session warns a day ahead.
-          const builds = ["deploy_app", "update_app", "build_image"].includes(
-            name,
-          );
-          const limit = left?.renewable ? 24 * 60 : builds ? 40 : 10;
-          if (left !== undefined && left.minutes > 0 && left.minutes < limit)
-            result = {
-              ...result,
-              auth_warning: `${what(left.renewable)} in ${
-                left.minutes >= 120
-                  ? `${Math.floor(left.minutes / 60)} h`
-                  : `${Math.floor(left.minutes)} min`
-              }${
-                builds && !terminal.has(result.status)
-                  ? "; builds often take 10–30 min, and when it ends the deployment pauses as needs_auth until the user signs in again"
-                  : ""
-              }. Ask the user to sign in again now: ${api.authHelp("")}`,
-            };
           return {
             content: [
               {
@@ -246,10 +196,7 @@ async function main() {
                   result.text ??
                   (result.status
                     ? `${result.status}${result.deployment_id ? ` (${result.deployment_id})` : ""}${result.message ? `: ${result.message}` : ""}`
-                    : `Discovery result: ${result.total !== undefined ? result.total + " images" : Object.keys(result).join(", ")}. See structuredContent for details.`) +
-                    (result.auth_warning
-                      ? ` Warning: ${result.auth_warning}`
-                      : ""),
+                    : `Discovery result: ${result.total !== undefined ? result.total + " images" : Object.keys(result).join(", ")}. See structuredContent for details.`),
               },
             ],
             // A preformatted text (build logs) is not repeated in structuredContent.
@@ -388,85 +335,12 @@ async function main() {
   );
   register(
     "get_deployment",
-    "With deployment_id, observe/wait for background execution; the MCP owns execution. Each call waits up to wait_seconds (max 20); to wait longer, call again, as often as needed (a loop of get_deployment calls is fine), until execution is finished; do not answer the user while it is still in the background. Services carry status_changes and restarts_seen when the MCP saw the status change or a new container start. After sync_files (or manual upload) set files_uploaded=true; after cookie replacement checking the job resumes it. With no arguments, returns the map of all deployments: every deployment-enabled project with its applications and services (names, native statuses, public URLs, ports). With desk_url or project_id, returns that project's desks, images, hardware and applications; add application_id for one application. resume=false observes only. Never returns environment-variable values.",
+    "With deployment_id, observe/wait for background execution; the MCP owns execution. Each call waits up to wait_seconds (max 20); to wait longer, call again, as often as needed (a loop of get_deployment calls is fine), until execution is finished; do not answer the user while it is still in the background. Services carry status_changes and restarts_seen when the MCP saw the status change or a new container start. After sync_files (or manual upload) set files_uploaded=true; after a new key is saved, checking the job resumes it. With no arguments, returns the map of all deployments: every deployment-enabled project with its applications and services (names, native statuses, public URLs, ports). With desk_url or project_id, returns that project's desks, images, hardware and applications; add application_id for one application. resume=false observes only. Never returns environment-variable values.",
     getInput,
     (a) => runtime.get(a),
     false,
     20000,
     "deploy",
-  );
-  /** The sign-in window this process opened, while it is open and until its result is read. */
-  type SignIn = {
-    done: boolean;
-    host: string;
-    result?: SignInResult;
-    promise: Promise<void>;
-  };
-  let signing: SignIn | undefined;
-  register(
-    "sign_in",
-    "Signs the user in to their Constructor: https://constructor.app unless url names another one (any link from it, e.g. https://acme.constructor.app). Call it when the user asks to sign in, or when a tool returns needs_auth, after telling the user a sign-in window is about to open. It opens a separate Chrome window at the sign-in page; the user signs in there and the window closes by itself. There is one sign-in at a time: signing in to another Constructor replaces it, and the MCP works there afterwards. The session is kept for this harness only, and the MCP renews it automatically for up to 14 days. Waits up to wait_seconds; while the user is still signing in it returns sign_in_pending: call it again (no second window opens), then repeat the call that needed auth.",
-    signInInput,
-    async (a) => {
-      const i = signInInput.parse(a);
-      if (!signing) {
-        let host = config.baseUrl;
-        if (i.url) {
-          try {
-            host = originOf(i.url);
-          } catch (e: any) {
-            throw new ToolError("invalid_input", `url: ${e.message}`);
-          }
-          if (config.baseUrlFixed && host !== config.baseUrl)
-            throw new ToolError(
-              "wrong_environment",
-              `This MCP is fixed to ${config.baseUrl} by CONSTRUCTOR_BASE_URL; it cannot sign in to ${host}.`,
-            );
-        }
-        const signedIn = (await sessionHost(config.cookieFile)) === host;
-        const left = signedIn
-          ? await api.authLeft().catch(() => undefined)
-          : undefined;
-        if (!i.force && left?.renewable && left.minutes > 60)
-          return {
-            status: "signed_in",
-            message: `Already signed in to ${host}; the session renews automatically for another ${Math.floor(left.minutes / 1440)} days. Pass force=true to sign in again.`,
-            session_file: config.cookieFile,
-            host,
-          };
-        const state: SignIn = {
-          done: false,
-          host,
-          promise: Promise.resolve(),
-        };
-        state.promise = signIn(
-          { ...config, baseUrl: host },
-          config.cookieFile,
-        ).then((r) => {
-          state.result = r;
-          state.done = true;
-          if (r.status === "signed_in") api.aimed = undefined;
-        });
-        signing = state;
-        api.signingIn = true;
-        void state.promise.finally(() => (api.signingIn = false));
-      }
-      const current = signing;
-      await Promise.race([
-        current.promise,
-        new Promise((r) => setTimeout(r, i.wait_seconds * 1000)),
-      ]);
-      if (!current.done)
-        return {
-          status: "sign_in_pending",
-          message: `A Chrome window is open at ${current.host}. Ask the user to sign in there; it closes by itself afterwards. Then call sign_in again to confirm, or repeat the call that needed auth.`,
-        };
-      signing = undefined;
-      await api.followSession();
-      return current.result!;
-    },
-    true,
-    30000,
   );
   register(
     "get_logs",
@@ -533,16 +407,11 @@ async function main() {
         server.close(),
       );
     });
-  // Each harness keeps its own session, named after the client in the handshake.
   let recovered = false;
   server.server.oninitialized = () => {
-    if (!config.cookieFileFixed)
-      config.cookieFile = sessionFile(
-        harnessOf(server.server.getClientVersion()?.name),
-      );
     if (!recovered) {
       recovered = true;
-      void api.followSession().finally(() => runtime.recover());
+      void api.refresh().finally(() => runtime.recover());
     }
   };
   await server.connect(new StdioServerTransport());

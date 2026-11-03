@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { resolve } from "node:path";
-import { platform, P, D } from "./platform.js";
+import { platform, KEY, P, D } from "./platform.js";
 
-test("stdio exposes fourteen tools and executes discovery, validation and image listing without stdout noise", async () => {
+test("stdio exposes thirteen tools (no sign-in) and executes discovery, validation and image listing without stdout noise", async () => {
   const f = await platform();
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -14,7 +14,7 @@ test("stdio exposes fourteen tools and executes discovery, validation and image 
       PATH: process.env.PATH!,
       CONSTRUCTOR_BASE_URL: f.config.baseUrl,
       CONSTRUCTOR_API_PATH: f.config.apiPath,
-      CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+      CONSTRUCTOR_KEY_FILE: f.config.keyFile,
       CONSTRUCTOR_STATE_DIR: f.config.stateDir,
       CONSTRUCTOR_READINESS_SECONDS: "0",
       CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",
@@ -37,7 +37,6 @@ test("stdio exposes fourteen tools and executes discovery, validation and image 
       "list_files",
       "list_images",
       "move_path",
-      "sign_in",
       "start_app",
       "stop_app",
       "sync_files",
@@ -71,8 +70,15 @@ test("stdio exposes fourteen tools and executes discovery, validation and image 
       name: "list_images",
       arguments: { project_id: P },
     });
-    assert.equal(auth.structuredContent.status, "needs_auth");
-    assert.ok(!JSON.stringify(auth).includes("test-cookie"));
+    assert.equal(auth.structuredContent.status, "needs_key");
+    assert.match(
+      auth.structuredContent.message,
+      /constructor-research-set-key/,
+    );
+    assert.ok(!JSON.stringify(auth).includes(KEY));
+    // Every request carried the key and nothing else.
+    assert.ok(f.db.keys.length > 0);
+    assert.ok(f.db.keys.every((k: string) => k === `Bearer ${KEY}`));
     assert.ok(!JSON.stringify(auth).includes("SECRET"));
     assert.equal(stderr, "");
   } finally {
@@ -101,7 +107,7 @@ test("stdio deployment executes the whole application after the submit response,
     env: {
       PATH: process.env.PATH!,
       CONSTRUCTOR_BASE_URL: f.config.baseUrl,
-      CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+      CONSTRUCTOR_KEY_FILE: f.config.keyFile,
       CONSTRUCTOR_STATE_DIR: f.config.stateDir,
       CONSTRUCTOR_READINESS_SECONDS: "0",
       CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",

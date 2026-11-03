@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { platform, finish, P, A, D, H, I } from "./platform.js";
+import { platform, finish, KEY, P, A, D, H, I } from "./platform.js";
+import { saveKeyFile } from "../src/key.js";
 import { DeploymentEngine } from "../src/deployment.js";
 import { StateStore } from "../src/store.js";
 const imageService = {
@@ -248,10 +249,10 @@ test("invalid dependency or unknown image fails before any mutation", async () =
   }
 });
 
-test("missing cookie pauses operation, replacement resumes; repeated request_id does not duplicate", async () => {
+test("missing key pauses operation, a saved key resumes; repeated request_id does not duplicate", async () => {
   const f = await platform();
   try {
-    await unlink(f.config.cookieFile);
+    await unlink(f.config.keyFile);
     const input = {
       project_id: P,
       application_name: "web",
@@ -259,9 +260,9 @@ test("missing cookie pauses operation, replacement resumes; repeated request_id 
       request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     };
     let r = await f.engine.deploy(input);
-    assert.equal(r.status, "needs_auth");
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(f.config.cookieFile, "ap_access_token=renewed");
+    assert.equal(r.status, "needs_key");
+    assert.match(r.next_action, /constructor-research-set-key/);
+    await saveKeyFile(f.config.keyFile, f.config.baseUrl, KEY);
     r = await finish(f.engine, await f.engine.deploy(input));
     assert.equal(r.status, "started");
     await f.engine.deploy(input);
@@ -272,7 +273,7 @@ test("missing cookie pauses operation, replacement resumes; repeated request_id 
           join(f.config.stateDir, `${r.deployment_id}.json`),
           "utf8",
         )
-      ).includes("renewed"),
+      ).includes(KEY),
     );
   } finally {
     await f.close();
@@ -971,6 +972,33 @@ test("readiness reports not_responding when the public URL does not answer in ti
       /did not answer.*web printed nothing.*127\.0\.0\.1/,
     );
     assert.equal(r.readiness_checks.web.status, 502);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a project with deployment off that the key may not switch on stops with what to tell the user", async () => {
+  const f = await platform();
+  try {
+    f.db.projects[0].deployment_enabled = false;
+    f.db.denyEnable = true;
+    const r = await finish(
+      f.engine,
+      await f.engine.buildImage({
+        project_id: P,
+        desk_id: D,
+        name: "web",
+        dockerfile: "/Dockerfile",
+      }),
+    );
+    assert.equal(r.status, "failed");
+    assert.equal(r.failure.stage, "prepare");
+    assert.match(
+      r.message,
+      /switch on deployment for the project in Constructor/,
+    );
+    assert.ok(!r.message.includes("SECRET"));
+    assert.ok(!f.db.mutations.some((m: any) => m.path.endsWith("/images")));
   } finally {
     await f.close();
   }

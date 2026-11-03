@@ -1,4 +1,5 @@
-# Publishes to npm when a version tag (v1.2.3) is pushed. Uses npm trusted publishing:
+# Publishes to npm when a version tag (v1.2.3) is pushed. A prerelease (v1.2.3-beta.1) goes to the
+# "beta" dist-tag, so `latest` never moves to it. Uses npm trusted publishing:
 # on npmjs.com, add this repository and workflow under the package's Trusted Publisher
 # settings; no token is stored here.
 name: publish
@@ -21,4 +22,11 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - run: npm publish --provenance --access public
+      - name: Tag matches package.json
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - name: Publish
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) npm publish --provenance --access public --tag beta ;;
+            *) npm publish --provenance --access public ;;
+          esac

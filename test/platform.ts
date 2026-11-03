@@ -12,16 +12,8 @@ export const A = "daf773193e204ea783e70c07f4b97cbc";
 export const D = "dddd1111";
 export const H = "hhhh1111";
 export const I = "iiii1111";
-/** An access token expiring in `minutes`, with extra claims. */
-export const jwt = (minutes: number, extra: object = {}) =>
-  "eyJhbGciOiJIUzI1NiJ9." +
-  Buffer.from(
-    JSON.stringify({
-      exp: Math.floor(Date.now() / 1000 + minutes * 60),
-      ...extra,
-    }),
-  ).toString("base64url") +
-  ".sig";
+/** The access key the fake Constructor accepts. */
+export const KEY = "rk-test-key-0123456789";
 export async function platform() {
   const dir = await mkdtemp(join(tmpdir(), "constructor-flow-"));
   const db: any = {
@@ -36,11 +28,9 @@ export async function platform() {
     mutations: [],
     requests: [],
     auth: true,
-    /** Session renewal: the one refresh token the server still accepts. */
-    refresh: "refresh-0",
-    renewals: 0,
-    sessionEnd: Math.floor(Date.now() / 1000) + 14 * 86400,
-    cookies: [] as string[],
+    /** The key accepted; every request's X-Research-AccessKey header is recorded. */
+    key: KEY,
+    keys: [] as string[],
     buildStatus: "in_progress",
     errorPath: undefined,
     /** Disk D's project folder: path -> contents; folders hold null. */
@@ -85,6 +75,13 @@ export async function platform() {
   let n = 1000;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://localhost");
+    // Like the gateway: every route takes only the access key.
+    const sent = req.headers["x-research-accesskey"];
+    db.keys.push(String(sent ?? ""));
+    if (req.headers.cookie || !db.auth || sent !== `Bearer ${db.key}`) {
+      res.writeHead(401, { "content-type": "application/json" });
+      return res.end('{"code":"Unauthorized","message":"SECRET"}');
+    }
     /** Logs in db.serviceLogs are not replayed: a container that restarted since those lines. */
     const build =
       /^\/api\/platform-keeper\/(?:image-builds|services)\/([^/]+)\/logs$/.exec(
@@ -108,18 +105,9 @@ export async function platform() {
       req.on("close", () => set.delete(res));
       return;
     }
-    if (url.pathname === "/research/") {
-      // Signing in ends on a page that sets the session cookies.
-      res.setHeader("set-cookie", [
-        `ap_access_token=${jwt(60, { max_slt: db.sessionEnd })}; Path=/; HttpOnly`,
-        "ap_id_token=id-0; Path=/; HttpOnly",
-        `ap_refresh_token=${db.refresh}; Path=/; HttpOnly`,
-      ]);
-      return res.end("<h1>Constructor</h1>");
-    }
     if (url.pathname.startsWith("/api/platform-storage/"))
       return dav(req, res, url);
-    const path = url.pathname.replace("/api/platform-account", "");
+    const path = url.pathname.replace("/api/platform-account/v1", "");
     const body = await new Promise<any>((resolve) => {
       let s = "";
       req.on("data", (c) => (s += c));
@@ -130,24 +118,6 @@ export async function platform() {
       res.end(status === 204 ? undefined : JSON.stringify(data));
     };
     db.requests.push({ method: req.method, path, body });
-    const cookie = req.headers.cookie ?? "";
-    db.cookies.push(cookie);
-    // Like the gateway: a request with only a refresh token renews the session.
-    if (path === "/auth/session" && !/ap_access_token=/.test(cookie)) {
-      const sent = /ap_refresh_token=([^;\s]+)/.exec(cookie)?.[1];
-      if (!sent || sent !== db.refresh)
-        return send({ details: { msg: "SECRET", error_code: 20001 } }, 401);
-      db.renewals++;
-      db.refresh = `refresh-${db.renewals}`;
-      res.setHeader("set-cookie", [
-        `ap_access_token=${jwt(60, { max_slt: db.sessionEnd })}; Path=/; HttpOnly; Secure`,
-        `ap_id_token=id-${db.renewals}; Path=/; HttpOnly`,
-        `ap_refresh_token=${db.refresh}; Path=/; HttpOnly`,
-      ]);
-      return send({ user: { id: "user" }, refresh_interval: 150 });
-    }
-    if (!db.auth)
-      return send({ details: { msg: "SECRET", error_code: 20001 } }, 401);
     if (req.method !== "GET")
       db.mutations.push({ method: req.method, path, body });
     if (path === db.errorPath)
@@ -169,6 +139,9 @@ export async function platform() {
     if (path === `/projects/${P}` && req.method === "GET")
       return send(db.projects.find((p: any) => p.id === P));
     if (path === `/projects/${P}` && req.method === "PATCH") {
+      // Like the public API: a key may not switch on deployment (yet).
+      if (db.denyEnable && "deployment_enabled" in (body ?? {}))
+        return send({ details: { msg: "SECRET", error_code: 20005 } }, 403);
       Object.assign(db.projects[0], body);
       return send(db.projects[0]);
     }
@@ -394,13 +367,14 @@ export async function platform() {
     end(405);
   }
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const cookieFile = join(dir, "cookie");
-  await writeFile(cookieFile, "ap_access_token=test-cookie");
+  const baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
+  const keyFile = join(dir, "access-key.json");
+  await writeFile(keyFile, JSON.stringify({ url: baseUrl, key: KEY }));
   const config = {
-    baseUrl: `http://127.0.0.1:${(server.address() as any).port}`,
+    baseUrl,
     baseUrlFixed: true,
-    apiPath: "/api/platform-account",
-    cookieFile,
+    apiPath: "/api/platform-account/v1",
+    keyFile,
     stateDir: join(dir, "state"),
     requestTimeoutMs: 1000,
   };
@@ -441,7 +415,7 @@ export async function finish(
     ![
       "started",
       "failed",
-      "needs_auth",
+      "needs_key",
       "needs_upload",
       "needs_reconciliation",
     ].includes(result.status);

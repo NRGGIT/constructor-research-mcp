@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
-import { PlatformApi } from "../src/api.js";
+import { PlatformApi, cleanKey } from "../src/api.js";
+import { saveKeyFile } from "../src/key.js";
 import { buildInput, deployInput } from "../src/schemas.js";
 import { configFromEnv } from "../src/config.js";
 
@@ -72,7 +73,7 @@ test("ports reject invalid numbers and more than one public port", () => {
   );
 });
 
-test("configuration defaults to constructor.app and rejects insecure remote hosts", () => {
+test("configuration defaults to constructor.app and the public API, and rejects insecure remote hosts", () => {
   assert.equal(configFromEnv({}).baseUrl, "https://constructor.app");
   assert.equal(configFromEnv({}).baseUrlFixed, false);
   assert.equal(
@@ -81,15 +82,39 @@ test("configuration defaults to constructor.app and rejects insecure remote host
     }).baseUrlFixed,
     true,
   );
-  assert.equal(configFromEnv({}).apiPath, "/api/platform-account");
+  assert.equal(configFromEnv({}).apiPath, "/api/platform-account/v1");
+  assert.equal(configFromEnv({}).accessKey, undefined);
+  assert.equal(
+    configFromEnv({ CONSTRUCTOR_ACCESS_KEY: " rk-abc12345 " }).accessKey,
+    "rk-abc12345",
+  );
+  assert.match(
+    configFromEnv({}).keyFile,
+    /\.config\/constructor-research\/access-key\.json$/,
+  );
   assert.throws(() =>
     configFromEnv({ CONSTRUCTOR_BASE_URL: "http://example.com" }),
   );
 });
 
-test("API reloads cookie file per request; never follows redirects; hides error bodies", async () => {
+test("a key is accepted with or without Bearer, and nothing that could not travel in a header", () => {
+  assert.equal(cleanKey("rk-abc12345"), "rk-abc12345");
+  assert.equal(cleanKey("Bearer rk-abc12345\n"), "rk-abc12345");
+  for (const bad of [
+    undefined,
+    "",
+    "short",
+    "rk-abc 12345",
+    "rk-abc\r\nX: y",
+    "rk-ключ12345",
+  ])
+    assert.equal(cleanKey(bad), undefined, String(bad));
+});
+
+const KEY = "rk-secret-key-123456";
+test("API sends only the key, reads the key file per request, never follows redirects, hides error bodies", async () => {
   const dir = await mkdtemp(join(tmpdir(), "constructor-api-"));
-  const cookieFile = join(dir, "cookie");
+  const keyFile = join(dir, "access-key.json");
   const server = createServer((req, res) => {
     if (req.url?.endsWith("/redirect")) {
       res.writeHead(302, { location: "/target" });
@@ -107,32 +132,50 @@ test("API reloads cookie file per request; never follows redirects; hides error 
       return;
     }
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ cookie: req.headers.cookie }));
+    res.end(
+      JSON.stringify({
+        key: req.headers["x-research-accesskey"],
+        cookie: req.headers.cookie,
+      }),
+    );
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const port = (server.address() as any).port;
+  const baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
   const api = new PlatformApi({
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl,
     apiPath: "/api",
-    cookieFile,
+    keyFile,
     stateDir: dir,
     requestTimeoutMs: 1000,
   });
+  const leaks = (e: any) =>
+    !e.message.includes("SECRET") && !e.message.includes(KEY);
   try {
     await assert.rejects(
       api.request("GET", "/test"),
-      (e: any) => e.code === "needs_auth",
+      (e: any) => e.code === "needs_key" && /set-key/.test(e.message),
     );
-    await writeFile(
-      cookieFile,
-      "ap_access_token=one\n\nBASE_URL=https://unused",
+    await writeFile(keyFile, "not json " + KEY);
+    await assert.rejects(
+      api.request("GET", "/test"),
+      (e: any) => e.code === "needs_key" && leaks(e),
     );
+    // A key saved for another Constructor is never sent here.
+    await saveKeyFile(keyFile, "https://other.constructor.app", KEY);
+    await assert.rejects(
+      api.request("GET", "/test"),
+      (e: any) =>
+        e.code === "needs_key" &&
+        e.message.includes("other.constructor.app") &&
+        leaks(e),
+    );
+    await saveKeyFile(keyFile, baseUrl, KEY);
     assert.deepEqual(await api.request("GET", "/test"), {
-      cookie: "ap_access_token=one",
+      key: `Bearer ${KEY}`,
     });
-    await writeFile(cookieFile, "Cookie: ap_access_token=two");
+    await saveKeyFile(keyFile, baseUrl, "Bearer rk-second-key-0000");
     assert.deepEqual(await api.request("GET", "/test"), {
-      cookie: "ap_access_token=two",
+      key: "Bearer rk-second-key-0000",
     });
     await assert.rejects(
       api.request("GET", "/redirect"),
@@ -140,15 +183,17 @@ test("API reloads cookie file per request; never follows redirects; hides error 
     );
     await assert.rejects(
       api.request("GET", "/auth"),
-      (e: any) => e.code === "needs_auth" && !e.message.includes("SECRET"),
+      (e: any) => e.code === "needs_key" && e.status === 401 && leaks(e),
     );
     await assert.rejects(
       api.request("PATCH", "/error", {}),
-      (e: any) =>
-        e.code === "api_error" &&
-        e.apiCode === 123 &&
-        !e.message.includes("SECRET"),
+      (e: any) => e.code === "api_error" && e.apiCode === 123 && leaks(e),
     );
+    // CONSTRUCTOR_ACCESS_KEY wins over the file.
+    const fromEnv = new PlatformApi({ ...api.config, accessKey: KEY });
+    assert.deepEqual(await fromEnv.request("GET", "/test"), {
+      key: `Bearer ${KEY}`,
+    });
   } finally {
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
@@ -156,10 +201,37 @@ test("API reloads cookie file per request; never follows redirects; hides error 
   }
 });
 
+test("without CONSTRUCTOR_BASE_URL the MCP works with the Constructor the saved key belongs to", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "constructor-refresh-"));
+  const keyFile = join(dir, "access-key.json");
+  const api = new PlatformApi({
+    baseUrl: "https://constructor.app",
+    apiPath: "/api",
+    keyFile,
+    stateDir: dir,
+    requestTimeoutMs: 1000,
+  });
+  try {
+    await api.refresh();
+    assert.equal(api.config.baseUrl, "https://constructor.app");
+    await saveKeyFile(keyFile, "https://acme.constructor.app/projects/x", KEY);
+    await api.refresh();
+    assert.equal(api.config.baseUrl, "https://acme.constructor.app");
+    assert.equal((await stat(keyFile)).mode & 0o777, 0o600);
+    const fixed = new PlatformApi({
+      ...api.config,
+      baseUrl: "https://test.example",
+      baseUrlFixed: true,
+    });
+    await fixed.refresh();
+    assert.equal(fixed.config.baseUrl, "https://test.example");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a server error after a mutation is treated as uncertain, without exposing its body", async () => {
   const dir = await mkdtemp(join(tmpdir(), "constructor-uncertain-"));
-  const cookieFile = join(dir, "cookie");
-  await writeFile(cookieFile, "ap_access_token=test");
   const server = createServer((_req, res) => {
     res.writeHead(500, { "content-type": "application/json" });
     res.end('{"details":{"msg":"SECRET"}}');
@@ -168,7 +240,8 @@ test("a server error after a mutation is treated as uncertain, without exposing 
   const api = new PlatformApi({
     baseUrl: `http://127.0.0.1:${(server.address() as any).port}`,
     apiPath: "/api",
-    cookieFile,
+    accessKey: KEY,
+    keyFile: join(dir, "unused.json"),
     stateDir: dir,
     requestTimeoutMs: 1000,
   });
@@ -187,8 +260,6 @@ test("a server error after a mutation is treated as uncertain, without exposing 
 
 test("call budget prevents a slow API from exceeding the MCP operation deadline", async () => {
   const dir = await mkdtemp(join(tmpdir(), "constructor-budget-"));
-  const cookieFile = join(dir, "cookie");
-  await writeFile(cookieFile, "ap_access_token=test");
   const server = createServer((_req, res) => {
     setTimeout(() => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -199,7 +270,8 @@ test("call budget prevents a slow API from exceeding the MCP operation deadline"
   const api = new PlatformApi({
     baseUrl: `http://127.0.0.1:${(server.address() as any).port}`,
     apiPath: "/api",
-    cookieFile,
+    accessKey: KEY,
+    keyFile: join(dir, "unused.json"),
     stateDir: dir,
     requestTimeoutMs: 1000,
   });

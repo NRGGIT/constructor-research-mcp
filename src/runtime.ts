@@ -10,7 +10,7 @@ import {
   getInput,
 } from "./schemas.js";
 
-export const paused = new Set(["needs_auth", "needs_upload"]);
+export const paused = new Set(["needs_key", "needs_upload"]);
 /** Tells the agent which unfinished deployments a new one ended, and what they changed that it does not. */
 function replacedNote(
   replaced?: { deployment_id: string; services_not_included: string[] }[],
@@ -86,7 +86,7 @@ export class DeploymentRuntime {
     }
     let op = await this.engine.store.load(i.deployment_id);
     if (
-      op?.status === "needs_auth" &&
+      op?.status === "needs_key" &&
       i.resume &&
       i.files_uploaded === undefined
     ) {
@@ -232,8 +232,8 @@ export class DeploymentRuntime {
       next_action:
         op.status === "failed"
           ? "Tell the user which stage/service failed and pass on the message. failure.log_tail has the last log lines when the MCP captured them; get_logs shows more. Do not investigate using browser or other tools."
-          : op.status === "needs_auth"
-            ? `${this.engine.api.authHelp("The token expired or is invalid.")} Then check this deployment again.`
+          : op.status === "needs_key"
+            ? `${this.engine.api.keyHelp("Constructor rejected the access key, or none is set.")} Then check this deployment again.`
             : op.status === "needs_upload"
               ? "Upload the listed files with sync_files, then call get_deployment with files_uploaded=true."
               : op.status === "confirm_required"

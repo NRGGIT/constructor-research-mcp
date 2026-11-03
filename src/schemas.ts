@@ -362,26 +362,3 @@ export const syncFilesInput = z.strictObject({
       "Needed only when existing files would be replaced: the first call returns the list for the user to approve once; repeat with confirm=true.",
     ),
 });
-
-export const signInInput = z.strictObject({
-  url: z
-    .string()
-    .max(2000)
-    .optional()
-    .describe(
-      "Any link to the user's Constructor: a desk link, or just its address, e.g. https://acme.constructor.app. The user signs in there and the MCP works there afterwards, replacing any earlier sign-in. Pass it when the user names their Constructor or gives a link; omit it to sign in where the MCP works now (https://constructor.app unless the user signed in elsewhere).",
-    ),
-  wait_seconds: z
-    .number()
-    .int()
-    .min(0)
-    .max(25)
-    .default(20)
-    .describe("How long to wait for the user to finish signing in."),
-  force: z
-    .boolean()
-    .default(false)
-    .describe(
-      "Open the window even though a renewable session is saved (to switch account).",
-    ),
-});

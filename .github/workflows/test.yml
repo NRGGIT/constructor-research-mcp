@@ -1,10 +1,9 @@
-# Typecheck, formatting and tests. Tests use a local API simulator only; the sign-in
-# tests use the runner's Chrome in headless mode.
+# Typecheck, formatting and tests. Tests use a local API simulator only.
 name: test
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
 
 jobs:

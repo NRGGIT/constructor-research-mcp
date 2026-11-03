@@ -10,7 +10,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { configFromEnv, sessionFile } from "./config.js";
+import { configFromEnv } from "./config.js";
 import { PlatformApi } from "./api.js";
 import { StateStore } from "./store.js";
 import { DeploymentEngine, terminal } from "./deployment.js";
@@ -155,7 +155,7 @@ async function claim(dir: string, id: string) {
 const USAGE = `Usage: constructor-research-wait [deployment_id ...] [--max-minutes N] [--hook claude-code|codex|opencode]
 
 Waits until the deployments finish (all in-progress ones when no ID is given) and prints one line each.
-Exit codes: 0 finished, 2 needs the user (failed, token, upload, confirmation), 3 still running at the
+Exit codes: 0 finished, 2 needs the user (failed, key, upload, confirmation), 3 still running at the
 time limit, 4 nothing to wait for, 1 usage error.
 
 --hook claude-code  PostToolUse hook with asyncRewake: waits for the deployment in the tool result and
@@ -187,10 +187,8 @@ async function main(argv: string[]) {
     return EXIT.error;
   }
   const config = configFromEnv();
-  // A hook runs for one harness: use that harness's session.
-  if (hook && !config.cookieFileFixed) config.cookieFile = sessionFile(hook);
   const api = new PlatformApi(config);
-  await api.followSession();
+  await api.refresh();
   const store = new StateStore(config);
   const engine = new DeploymentEngine(api, store);
   engine.files = new FileManager(api, engine);

@@ -1,14 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { DEFAULT_BASE_URL, type Config } from "./config.js";
-import {
-  claims,
-  readSession,
-  saveSession,
-  sessionHost,
-  setCookies,
-} from "./session.js";
-import { withLock } from "./store.js";
+import { DEFAULT_BASE_URL, VERSION, type Config } from "./config.js";
+import { readKeyFile } from "./key.js";
 export class ToolError extends Error {
   constructor(
     public code: string,
@@ -20,14 +13,12 @@ export class ToolError extends Error {
   }
 }
 export const segment = (s: string) => encodeURIComponent(s);
-/** `exp` (seconds) of the ap_access_token JWT, if readable. */
-export function expiry(cookie: string): number | undefined {
-  const token = /(?:^|;\s*)ap_access_token=([^;\s]+)/.exec(cookie)?.[1];
-  const exp = claims(token)?.exp;
-  return typeof exp === "number" ? exp : undefined;
+/** A key as Constructor shows it, with or without the "Bearer " the header adds. */
+export function cleanKey(raw: string | undefined) {
+  const key = raw?.trim().replace(/^Bearer\s+/i, "");
+  // Printable ASCII only: anything else could not travel in a header.
+  return key && /^[\x21-\x7e]{8,512}$/.test(key) ? key : undefined;
 }
-/** Renew the access token when it has less than this left (it lasts an hour). */
-const RENEW_MS = 10 * 60000;
 export class PlatformApi {
   private readonly deadline = new AsyncLocalStorage<number>();
   constructor(readonly config: Config) {}
@@ -38,158 +29,60 @@ export class PlatformApi {
   withBudget<T>(milliseconds: number, fn: () => Promise<T>): Promise<T> {
     return this.deadline.run(Date.now() + milliseconds, fn);
   }
-  /** How to supply a fresh token, with the exact file this MCP reads. */
-  authHelp(what = "Not signed in to Constructor.") {
-    const to = this.config.cookieFile;
-    return `${what} ${
-      this.signingIn
-        ? "A sign-in window is already open: ask the user to finish signing in there, then call sign_in to confirm."
-        : "Tell the user a sign-in window is about to open, then call the sign_in tool: the user signs in in a separate Chrome window that closes by itself, and the MCP renews the session automatically for up to 14 days."
-    } Without a desktop browser, the user runs: npx -y -p constructor-research-mcp constructor-research-set-token <file with a copied cURL> --to ${to}. Then repeat the same call.`;
+  /** How the user supplies a key; the key itself never passes through the chat. */
+  keyHelp(what = "No Constructor access key is set.") {
+    return `${what} The MCP needs the user's personal access key (rk-…) for ${this.config.baseUrl}. Ask the user to run this in a terminal and paste the key when asked: npx -y -p constructor-research-mcp@${VERSION} constructor-research-set-key ${this.config.baseUrl} (or to set CONSTRUCTOR_ACCESS_KEY and CONSTRUCTOR_BASE_URL in the MCP settings). Never ask the user to paste the key into the chat. Then repeat the same call.`;
   }
   /**
-   * Works with the Constructor the saved session belongs to; without one, with the host of the
-   * last desk link the user gave, or the default. CONSTRUCTOR_BASE_URL fixes it instead.
+   * Works with the Constructor the saved key belongs to, unless CONSTRUCTOR_BASE_URL fixes it.
+   * Read before every tool call, so a key saved meanwhile is used without a restart.
    */
-  async followSession() {
-    if (this.config.baseUrlFixed) return;
-    const host = await sessionHost(this.config.cookieFile);
-    this.config.baseUrl = host ?? this.aimed ?? DEFAULT_BASE_URL;
+  async refresh() {
+    if (this.config.baseUrlFixed || this.config.accessKey) return;
+    const saved = await readKeyFile(this.config.keyFile).catch(() => undefined);
+    this.config.baseUrl = saved?.url ?? DEFAULT_BASE_URL;
   }
-  /** The host of a desk link given while nobody is signed in: sign_in opens there. */
-  aimed?: string;
-  /** Set while the sign_in tool's window is open. */
-  signingIn = false;
-  /**
-   * Time left on the saved credentials: the login session when it can be renewed
-   * (`max_slt`, the latest renewal the server allows), else the access token.
-   */
-  async authLeft(): Promise<
-    { minutes: number; renewable: boolean } | undefined
-  > {
-    const saved = await readSession(this.config.cookieFile);
-    const access = claims(saved.get("ap_access_token"));
-    const renewable = saved.has("ap_refresh_token");
-    const end = renewable ? access?.max_slt : access?.exp;
-    if (renewable && end === undefined) return undefined;
-    if (typeof end !== "number") return undefined;
-    return { minutes: (end * 1000 - Date.now()) / 60000, renewable };
-  }
-  private renewing?: Promise<string>;
-  /** The Cookie header for a request: only the access token, renewed first when it runs low. */
-  private async cookie() {
-    let saved: Map<string, string>;
-    try {
-      saved = await readSession(this.config.cookieFile);
-    } catch {
-      saved = new Map();
-    }
-    let token = saved.get("ap_access_token");
-    const exp = expiry(`ap_access_token=${token}`);
-    // Never send one Constructor's session to another.
-    const owner = await sessionHost(this.config.cookieFile);
-    if (owner && owner !== this.config.baseUrl)
-      throw new ToolError(
-        "needs_auth",
-        this.authHelp(
-          `${this.config.cookieFile} holds a session for ${owner}, but this MCP works with ${this.config.baseUrl}.`,
-        ),
-      );
-    if (
-      saved.has("ap_refresh_token") &&
-      (!token || (exp !== undefined && exp * 1000 - Date.now() < RENEW_MS))
-    )
-      token = await (this.renewing ??= this.renew().finally(
-        () => (this.renewing = undefined),
-      ));
-    else if (!token) throw new ToolError("needs_auth", this.authHelp());
-    else if (exp !== undefined && exp * 1000 <= Date.now())
-      throw new ToolError(
-        "needs_auth",
-        this.authHelp(
-          `Token expired at ${new Date(exp * 1000).toISOString().slice(11, 16)} UTC.`,
-        ),
-      );
-    return `ap_access_token=${token}`;
-  }
-  /**
-   * Trades the refresh token for new tokens and saves them before anything else. A refresh
-   * token works once, so several MCP processes sharing the file renew under one lock, and
-   * a process that waited uses the tokens another one just saved.
-   */
-  private renew() {
-    const file = this.config.cookieFile;
-    return withLock(
-      file + ".lock",
-      async () => {
-        const saved = await readSession(file);
-        const token = saved.get("ap_access_token");
-        const exp = expiry(`ap_access_token=${token}`);
-        const valid = !!token && (exp === undefined || exp * 1000 > Date.now());
-        const refresh = saved.get("ap_refresh_token");
-        if (
-          !refresh ||
-          (exp !== undefined && exp * 1000 - Date.now() >= RENEW_MS)
-        )
-          return this.usable(token, valid);
-        let response: Response;
-        try {
-          response = await fetch(
-            this.config.baseUrl + this.config.apiPath + "/auth/session",
-            {
-              // Without an access token the server must renew; the browser does the same.
-              headers: {
-                Cookie: `ap_refresh_token=${refresh}`,
-                Accept: "application/json",
-              },
-              redirect: "manual",
-              signal: AbortSignal.timeout(this.config.requestTimeoutMs),
-            },
-          );
-        } catch {
-          if (valid) return token!;
-          throw new ToolError(
-            "connection_error",
-            "Could not reach Constructor to renew the session; repeat the same call.",
-          );
-        }
-        await response.body?.cancel();
-        const fresh = setCookies(response);
-        if (fresh.has("ap_access_token") && fresh.has("ap_refresh_token")) {
-          await saveSession(file, new Map([...saved, ...fresh]));
-          return fresh.get("ap_access_token")!;
-        }
-        if (response.status === 401) {
-          // The refresh token is spent; drop it so the file behaves like a plain token.
-          saved.delete("ap_refresh_token");
-          await saveSession(file, saved);
-          if (valid) return token!;
-          throw new ToolError(
-            "needs_auth",
-            this.authHelp(
-              "The saved login session can no longer be renewed: its refresh token was already used (a browser holding the same session renews it too) or the session reached its 14-day limit.",
-            ),
-          );
-        }
-        if (valid) return token!;
+  /** The access-key header for a request. */
+  private async auth() {
+    let key = this.config.accessKey;
+    if (key === undefined) {
+      let saved;
+      try {
+        saved = await readKeyFile(this.config.keyFile);
+      } catch (err: any) {
         throw new ToolError(
-          "connection_error",
-          `Constructor answered HTTP ${response.status} without new tokens while renewing the session; repeat the same call.`,
+          "needs_key",
+          this.keyHelp(
+            `${this.config.keyFile} could not be read (${err?.message ?? "invalid"}).`,
+          ),
         );
-      },
-      15000,
-      () =>
-        new ToolError(
-          "busy",
-          `Another process is renewing the session (${file}.lock); repeat the same call.`,
-        ),
-    );
+      }
+      if (!saved) throw new ToolError("needs_key", this.keyHelp());
+      // Never send one Constructor's key to another.
+      if (saved.url !== this.config.baseUrl)
+        throw new ToolError(
+          "needs_key",
+          this.keyHelp(
+            `The saved key belongs to ${saved.url}, but this MCP works with ${this.config.baseUrl}.`,
+          ),
+        );
+      key = saved.key;
+    }
+    const clean = cleanKey(key);
+    if (!clean)
+      throw new ToolError(
+        "needs_key",
+        this.keyHelp("The access key is not in a valid format."),
+      );
+    return { "X-Research-AccessKey": `Bearer ${clean}` };
   }
-  private usable(token: string | undefined, valid: boolean) {
-    if (valid) return token!;
-    throw new ToolError(
-      "needs_auth",
-      this.authHelp(token ? "Token expired." : undefined),
+  private rejected() {
+    return new ToolError(
+      "needs_key",
+      this.keyHelp(
+        "Constructor rejected the access key (revoked, expired or for another Constructor).",
+      ),
+      401,
     );
   }
   /**
@@ -203,7 +96,7 @@ export class PlatformApi {
     path: string,
     init: { body?: BodyInit; headers?: Record<string, string> } = {},
   ) {
-    const cookie = await this.cookie();
+    const auth = await this.auth();
     const retries = ["MOVE", "DELETE"].includes(method)
       ? []
       : this.storageRetryMs;
@@ -222,7 +115,7 @@ export class PlatformApi {
           this.config.baseUrl + this.davRoot(desk) + path,
           {
             method,
-            headers: { Cookie: cookie, ...init.headers },
+            headers: { ...auth, ...init.headers },
             body: init.body,
             redirect: "manual",
             signal: AbortSignal.timeout(
@@ -245,21 +138,19 @@ export class PlatformApi {
         await delay(wait);
         continue;
       }
-      if (response.status === 401)
-        throw new ToolError(
-          "needs_auth",
-          this.authHelp("Constructor rejected the token (expired or invalid)."),
-          401,
-        );
+      if (response.status === 401) {
+        await response.body?.cancel();
+        throw this.rejected();
+      }
       return response;
     }
   }
   /**
    * Opens a build-log stream. It stays open while the build runs; the caller reads the
-   * body and aborts through `signal`. 401 becomes needs_auth; other statuses are returned.
+   * body and aborts through `signal`. 401 becomes needs_key; other statuses are returned.
    */
   async stream(path: string, signal: AbortSignal) {
-    const cookie = await this.cookie();
+    const auth = await this.auth();
     let response: Response;
     try {
       response = await fetch(
@@ -267,7 +158,7 @@ export class PlatformApi {
           (this.config.keeperPath ?? "/api/platform-keeper") +
           path,
         {
-          headers: { Cookie: cookie, Accept: "text/event-stream" },
+          headers: { ...auth, Accept: "text/event-stream" },
           redirect: "manual",
           signal,
         },
@@ -280,11 +171,7 @@ export class PlatformApi {
     }
     if (response.status === 401) {
       await response.body?.cancel();
-      throw new ToolError(
-        "needs_auth",
-        this.authHelp("Constructor rejected the token (expired or invalid)."),
-        401,
-      );
+      throw this.rejected();
     }
     return response;
   }
@@ -299,7 +186,7 @@ export class PlatformApi {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const cookie = await this.cookie();
+    const auth = await this.auth();
     const remaining = (this.deadline.getStore() ?? Infinity) - Date.now();
     if (remaining <= 0)
       throw new ToolError(
@@ -311,7 +198,7 @@ export class PlatformApi {
       response = await fetch(this.config.baseUrl + this.config.apiPath + path, {
         method,
         headers: {
-          Cookie: cookie,
+          ...auth,
           Accept: "application/json",
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
@@ -332,12 +219,10 @@ export class PlatformApi {
           : "The API request may have been applied. Inspect resources before retrying this mutation.",
       );
     }
-    if (response.status === 401)
-      throw new ToolError(
-        "needs_auth",
-        this.authHelp("Constructor rejected the token (expired or invalid)."),
-        401,
-      );
+    if (response.status === 401) {
+      await response.body?.cancel();
+      throw this.rejected();
+    }
     if (!response.ok) {
       if (method !== "GET" && response.status >= 500)
         throw new ToolError(

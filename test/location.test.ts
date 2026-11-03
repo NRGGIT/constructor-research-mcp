@@ -41,7 +41,7 @@ test("links from another Constructor or without a desk are rejected", () => {
     () => parseDeskUrl(other, base),
     (e: any) =>
       e.code === "wrong_environment" &&
-      /signed in to https:\/\/acme\.constructor\.app.*call sign_in with url set to this link/.test(
+      /key is for https:\/\/acme\.constructor\.app.*constructor-research-set-key https:\/\/constructor\.app/.test(
         e.message,
       ),
   );
@@ -101,7 +101,7 @@ test("stdio tools accept desk_url in place of IDs", async () => {
     env: {
       PATH: process.env.PATH!,
       CONSTRUCTOR_BASE_URL: f.config.baseUrl,
-      CONSTRUCTOR_COOKIE_FILE: f.config.cookieFile,
+      CONSTRUCTOR_KEY_FILE: f.config.keyFile,
       CONSTRUCTOR_STATE_DIR: f.config.stateDir,
       CONSTRUCTOR_READINESS_SECONDS: "0",
       CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",
