@@ -1,6 +1,6 @@
 # Constructor Research MCP
 
-> **Beta (0.4.0-beta):** works only with Constructor's public API and a personal access key (`rk-…`); there is no browser sign-in. The public API is not yet on every Constructor. Install with `@beta`; `@latest` is still 0.3.x with browser sign-in.
+> **0.4:** works with Constructor's public API and a personal access key (`rk-…`); browser sign-in is gone. On a Constructor without the public API yet, pin the previous version: `constructor-research-mcp@0.3.3`.
 
 Local stdio MCP for Codex CLI, Claude Code and OpenCode. Submit the whole application once; the MCP builds images, connects services, configures them and starts them. The agent supplies missing configuration and reports the result.
 
@@ -14,7 +14,7 @@ You need Node.js 22+ and your personal access key (`rk-…`); the MCP does not w
 claude mcp add --scope user constructor-research \
   -e CONSTRUCTOR_BASE_URL=https://constructor.app \
   -e CONSTRUCTOR_ACCESS_KEY=rk-your-key \
-  -- npx -y constructor-research-mcp@beta
+  -- npx -y constructor-research-mcp@latest
 ```
 
 **Codex**
@@ -23,7 +23,7 @@ claude mcp add --scope user constructor-research \
 codex mcp add constructor-research \
   --env CONSTRUCTOR_BASE_URL=https://constructor.app \
   --env CONSTRUCTOR_ACCESS_KEY=rk-your-key \
-  -- npx -y constructor-research-mcp@beta
+  -- npx -y constructor-research-mcp@latest
 ```
 
 **OpenCode**: add the entry to `~/.config/opencode/opencode.json` (layouts for 1.x and 2.x in [INSTALL.md](INSTALL.md)).
@@ -37,7 +37,7 @@ The key then sits in the tool's settings file (`~/.claude.json`, `~/.codex/confi
 The MCP uses only a personal access key (`rk-…`) from Constructor's public API; there is no browser sign-in. Every request carries it as `X-Research-AccessKey: Bearer rk-…`, to the account API (`/api/platform-account/v1`), the desk storage (WebDAV) and the logs alike. The key never goes through the chat. It comes from the MCP settings (`CONSTRUCTOR_ACCESS_KEY`, with `CONSTRUCTOR_BASE_URL`, as in Install), or from a key file the user saves in a terminal, where the key is read hidden, checked against Constructor and saved:
 
 ```sh
-npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acme.constructor.app
+npx -y -p constructor-research-mcp@latest constructor-research-set-key https://acme.constructor.app
 ```
 
 It goes to `~/.config/constructor-research/access-key.json` (mode 600) together with the Constructor it belongs to, and the MCP works with that Constructor. All harnesses (Claude Code, Codex, OpenCode) and the wait command share this one file. Every request rereads it, so a new key needs no restart. A key is never sent to a Constructor other than the one it was saved for.
@@ -46,7 +46,7 @@ It goes to `~/.config/constructor-research/access-key.json` (mode 600) together 
 
 Without a key, or when Constructor rejects it (401: revoked, expired or for another Constructor), tools return `needs_key` with the command above; a deployment pauses as `needs_key` and resumes on the next check once a valid key is saved. A desk link from another Constructor returns `wrong_environment`.
 
-Deployment must be switched on for the project. If it is off and the key may not switch it on (403), the operation fails at stage `prepare` with a message asking the user to switch it on in Constructor.
+Deployment must be switched on for the project. When it is off, the MCP switches it on (`POST /projects/{id}/deployment`), which only the project owner may do. For anyone else (error 40005), the operation fails at stage `prepare` with a message asking the project owner to switch it on in Constructor.
 
 | Variable                            | Default                                                                                         |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -101,6 +101,12 @@ https://constructor.app/research/projects/<project_id>/desks/<desk_id>/viewer/fi
 ```
 
 Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the Constructor the key belongs to; a link from another one returns `wrong_environment` (see the access key above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
+
+Given only `project_id`, the MCP finds the desk itself:
+
+- one desk in the project: it is used;
+- no desk: `deploy_app`/`update_app` create one (`<application>-source`) for the sources; the file tools return an error;
+- several desks: nothing is changed and the tool returns `desk_choice_required` with each desk's `name`, `id` and `desk_url`. The agent asks the user which one and repeats the call with that link or ID.
 
 ## Normal deployment flow
 
@@ -171,7 +177,9 @@ Private DNS works between containers; browser JavaScript needs a public backend 
 
 ### Image reuse and limits
 
-Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building. `list_images` returns compact records with `not_started`, `snapshot_creation`, `in_progress`, `done` or `error`; `detailed:true` returns full records.
+Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building, or with `"image":"registry/repo:tag"` to name an image already in the project by its reference or name. `list_images` returns compact records with `source` (`desk_build` or `external`), `reference` and `build_status` (`not_started`, `snapshot_creation`, `in_progress`, `done` or `error`); `detailed:true` returns full records.
+
+External images (`source: external`) are pulled, not built, so they are accepted whatever their build status, unless it is `error`. They are added to the project in Constructor: the public API has no endpoint to add one, so `image` only finds images that are already there and lists the project's external images when nothing matches.
 
 - Build storage is omitted by default, using the API's documented **50 GB** default. Explicit `ephemeral_build_disk_size_gb` overrides must be **10–1000 GB**.
 - Each service can have multiple ports (1–65535), with at most **one public port**. That port must match where the container listens.
@@ -253,7 +261,7 @@ Constructor serves logs only live, as a stream: a build log while the build runs
 Builds can run for many minutes. The MCP keeps executing in the background, but an agent that has ended its turn is not told when they finish. `dist/wait.js` (bin `constructor-research-wait`) blocks until the given deployments, or all in-progress ones when no ID is given, finish, and prints one line each: status, message, services with public URLs, next step. Exit codes: `0` finished, `2` needs the user (failed, key, upload, volume confirmation), `3` still running at `--max-minutes` (default 60), `4` nothing in progress.
 
 ```sh
-npx -y -p constructor-research-mcp@beta constructor-research-wait <deployment_id>
+npx -y -p constructor-research-mcp@latest constructor-research-wait <deployment_id>
 ```
 
 It watches the checkpoints the MCP writes. For deployments named by ID, if no process has advanced one for a minute (the MCP was closed), it continues it itself, exactly as the MCP would on restart. Without IDs it only watches, since those deployments may belong to other sessions. While a deployment runs, `next_action` gives the agent the exact command, including the MCP's non-default `CONSTRUCTOR_*` settings; the wait command needs the same settings as the MCP.

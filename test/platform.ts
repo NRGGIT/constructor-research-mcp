@@ -138,6 +138,13 @@ export async function platform() {
     }
     if (path === `/projects/${P}` && req.method === "GET")
       return send(db.projects.find((p: any) => p.id === P));
+    if (path === `/projects/${P}/deployment` && req.method === "POST") {
+      // Only the project owner may switch deployment on.
+      if (db.denyEnable)
+        return send({ details: { msg: "SECRET", error_code: 40005 } }, 421);
+      db.projects[0].deployment_enabled = body.enabled;
+      return send(db.projects[0]);
+    }
     if (path === `/projects/${P}` && req.method === "PATCH") {
       // Like the public API: a key may not switch on deployment (yet).
       if (db.denyEnable && "deployment_enabled" in (body ?? {}))

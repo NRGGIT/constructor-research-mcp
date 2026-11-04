@@ -1,6 +1,6 @@
 {
   "name": "constructor-research-mcp",
-  "version": "0.4.0-beta.3",
+  "version": "0.4.0",
   "type": "module",
   "description": "Local deployment MCP for Constructor Research",
   "license": "MIT",
@@ -56,8 +56,5 @@
     "prettier": "3.9.10",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
-  },
-  "publishConfig": {
-    "tag": "beta"
   }
 }

@@ -3,7 +3,7 @@
   "mcp": {
     "constructor-research": {
       "type": "local",
-      "command": ["npx", "-y", "constructor-research-mcp@beta"]
+      "command": ["npx", "-y", "constructor-research-mcp@latest"]
     }
   }
 }

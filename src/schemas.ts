@@ -151,6 +151,14 @@ export const serviceInput = z
     name: serviceName,
     service_id: id.optional(),
     image_id: id.optional(),
+    image: z
+      .string()
+      .min(1)
+      .max(512)
+      .optional()
+      .describe(
+        "An image already in the project, by its reference (registry/repo:tag, for an external image) or its name, as list_images shows them. The MCP turns it into image_id. External images are added in Constructor; the API cannot add them.",
+      ),
     build: build.optional(),
     hardware: z
       .strictObject({
@@ -173,14 +181,14 @@ export const serviceInput = z
     depends_on: z.array(serviceName).optional(),
   })
   .refine(
-    (s) => !(s.image_id && s.build),
-    "Choose image_id or build, not both.",
+    (s) => [s.image_id, s.image, s.build].filter(Boolean).length <= 1,
+    "Choose one of image_id, image or build.",
   );
 export const deskUrl = z
   .string()
   .max(2048)
   .describe(
-    "Link to the Constructor desk the user copied from the browser, e.g. https://constructor.app/research/projects/<project>/desks/<desk>/viewer/file. Supplies project_id and desk_id; ask the user for it instead of choosing a project or desk yourself.",
+    "Link to the Constructor desk the user copied from the browser, e.g. https://constructor.app/research/projects/<project>/desks/<desk>/viewer/file. Supplies project_id and desk_id. With project_id alone the MCP uses the project's only desk; when the project has several, it asks for this link or desk_id.",
   );
 const deploymentShape = {
   project_id: id.optional(),

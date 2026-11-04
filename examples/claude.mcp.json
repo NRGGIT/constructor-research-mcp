@@ -2,7 +2,7 @@
   "mcpServers": {
     "constructor-research": {
       "command": "npx",
-      "args": ["-y", "constructor-research-mcp@beta"]
+      "args": ["-y", "constructor-research-mcp@latest"]
     }
   }
 }

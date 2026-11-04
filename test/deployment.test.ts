@@ -995,7 +995,7 @@ test("a project with deployment off that the key may not switch on stops with wh
     assert.equal(r.failure.stage, "prepare");
     assert.match(
       r.message,
-      /switch on deployment for the project in Constructor/,
+      /project owner to switch on deployment for the project in Constructor/,
     );
     assert.ok(!r.message.includes("SECRET"));
     assert.ok(!f.db.mutations.some((m: any) => m.path.endsWith("/images")));

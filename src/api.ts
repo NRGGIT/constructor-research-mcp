@@ -8,6 +8,8 @@ export class ToolError extends Error {
     message: string,
     public status?: number,
     public apiCode?: number,
+    /** Extra fields returned to the agent next to status and message. */
+    public details?: Record<string, unknown>,
   ) {
     super(message);
   }

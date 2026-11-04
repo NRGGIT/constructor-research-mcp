@@ -18,13 +18,13 @@ The key is required: the MCP does nothing without it. The address is `https://co
 claude mcp add --scope user constructor-research \
   -e CONSTRUCTOR_BASE_URL=https://constructor.app \
   -e CONSTRUCTOR_ACCESS_KEY=rk-your-key \
-  -- npx -y constructor-research-mcp@beta
+  -- npx -y constructor-research-mcp@latest
 ```
 
 On Windows (not WSL), use this instead:
 
 ```bat
-claude mcp add --scope user constructor-research -e CONSTRUCTOR_BASE_URL=https://constructor.app -e CONSTRUCTOR_ACCESS_KEY=rk-your-key -- cmd /c npx -y constructor-research-mcp@beta
+claude mcp add --scope user constructor-research -e CONSTRUCTOR_BASE_URL=https://constructor.app -e CONSTRUCTOR_ACCESS_KEY=rk-your-key -- cmd /c npx -y constructor-research-mcp@latest
 ```
 
 **Codex**: run once:
@@ -33,7 +33,7 @@ claude mcp add --scope user constructor-research -e CONSTRUCTOR_BASE_URL=https:/
 codex mcp add constructor-research \
   --env CONSTRUCTOR_BASE_URL=https://constructor.app \
   --env CONSTRUCTOR_ACCESS_KEY=rk-your-key \
-  -- npx -y constructor-research-mcp@beta
+  -- npx -y constructor-research-mcp@latest
 ```
 
 The first start downloads the package and can exceed Codex's 10-second start limit. If Codex reports a timeout, restart it once, or add `startup_timeout_sec = 60` under `[mcp_servers.constructor-research]` in `~/.codex/config.toml`. The full entry, if you prefer to write it by hand:
@@ -41,7 +41,7 @@ The first start downloads the package and can exceed Codex's 10-second start lim
 ```toml
 [mcp_servers.constructor-research]
 command = "npx"
-args = ["-y", "constructor-research-mcp@beta"]
+args = ["-y", "constructor-research-mcp@latest"]
 startup_timeout_sec = 60
 tool_timeout_sec = 30
 
@@ -58,7 +58,7 @@ CONSTRUCTOR_ACCESS_KEY = "rk-your-key"
   "mcp": {
     "constructor-research": {
       "type": "local",
-      "command": ["npx", "-y", "constructor-research-mcp@beta"],
+      "command": ["npx", "-y", "constructor-research-mcp@latest"],
       "environment": {
         "CONSTRUCTOR_BASE_URL": "https://constructor.app",
         "CONSTRUCTOR_ACCESS_KEY": "rk-your-key"
@@ -74,10 +74,10 @@ Then restart the tool, or run `/mcp` in Claude Code, so it starts the MCP. The f
 
 ## 2. Or keep the key out of the tool's settings
 
-Step 1 stores the key in the tool's settings file (`~/.claude.json`, `~/.codex/config.toml`, `opencode.json`). To avoid that, add the MCP without the two variables (`claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta`, and the same for Codex and OpenCode) and save the key in a terminal; it asks for the key without showing it:
+Step 1 stores the key in the tool's settings file (`~/.claude.json`, `~/.codex/config.toml`, `opencode.json`). To avoid that, add the MCP without the two variables (`claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@latest`, and the same for Codex and OpenCode) and save the key in a terminal; it asks for the key without showing it:
 
 ```sh
-npx -y -p constructor-research-mcp@beta constructor-research-set-key https://constructor.app
+npx -y -p constructor-research-mcp@latest constructor-research-set-key https://constructor.app
 ```
 
 It checks the key with Constructor and saves it, with that address, to `~/.config/constructor-research/access-key.json` (readable only by you). Claude Code, Codex, OpenCode and the wait hooks all use this one file, and a new key needs no restart. To switch Constructor or replace a revoked key, run it again. A key set in the tool's settings wins over the file. Never paste the key into the chat.
@@ -92,7 +92,7 @@ Builds can take many minutes. These add-ons wake the agent when a deployment it 
 
 ## Update
 
-Restart the tool (or `/mcp` in Claude Code): `@beta` fetches the newest beta on start. Your key is kept.
+Restart the tool (or `/mcp` in Claude Code): `@latest` fetches the newest version on start. Your key is kept.
 
 ## Troubleshooting
 
@@ -109,7 +109,7 @@ which npx
 **Check the MCP on its own.** Run the MCP Inspector, then turn on the server's toggle and open Tools:
 
 ```sh
-npx @modelcontextprotocol/inspector@2.11.0 -- npx -y constructor-research-mcp@beta
+npx @modelcontextprotocol/inspector@2.11.0 -- npx -y constructor-research-mcp@latest
 ```
 
 ## Uninstall

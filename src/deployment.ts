@@ -425,6 +425,70 @@ export class DeploymentEngine {
       `The desk's file storage was stopped (desk not used recently), so the MCP started it, as opening the desk in the browser does. It is still ${status ?? "starting"}; this takes about 30-40 s. Nothing was changed. Repeat the same call in a moment.`,
     );
   }
+  /** An image a service can run: built here, or external (pulled, never built). */
+  static usable(im: any) {
+    return im?.source === "external"
+      ? im.build_status !== "error"
+      : im?.build_status === "done";
+  }
+  /**
+   * The desk to use when the call names only the project: the only desk, a new one
+   * when there is none and `create` is given, otherwise the user chooses.
+   */
+  async deskFor(project: string, create?: string): Promise<string> {
+    await this.project(project);
+    const desks = await this.rows(this.root(project) + "/desks");
+    if (desks.length === 1) return desks[0].id;
+    if (desks.length > 1)
+      throw new ToolError(
+        "desk_choice_required",
+        `Project ${project} has ${desks.length} desks: ${desks.map((d) => `${d.name} (${d.id})`).join(", ")}. Nothing was changed. Ask the user which desk to use (name or link), then repeat the call with desk_url, or desk_id (build.desk_id for a service).`,
+        undefined,
+        undefined,
+        {
+          desks: desks.map((d) => ({
+            id: d.id,
+            name: d.name,
+            desk_url: this.deskLink(project, d.id),
+          })),
+        },
+      );
+    if (!create)
+      bad(
+        `Project ${project} has no desk. Ask the user to create one in Constructor, or deploy a local folder (deploy_app creates a desk for it).`,
+      );
+    const d = await this.api.request("POST", this.root(project) + "/desks", {
+      name: create,
+    });
+    return d.id;
+  }
+  /** Turn each service's `image` (reference or name) into the project's image_id. */
+  async resolveImages(project: string, services: any[]) {
+    if (!services?.some((s) => s.image)) return services;
+    const images = await this.images(project);
+    return services.map((s) => {
+      if (!s.image) return s;
+      const want = s.image.trim();
+      const hits = images.filter(
+        (im) => im.reference === want || im.name === want || im.id === want,
+      );
+      const im =
+        hits.length > 1
+          ? (hits.find((x) => x.reference === want) ??
+            bad(
+              `Image "${want}" for ${s.name} matches several images: ${hits.map((x) => x.id).join(", ")}. Pass image_id.`,
+            ))
+          : hits[0];
+      if (!im) {
+        const ext = images.filter((x) => x.source === "external");
+        bad(
+          `Image "${want}" for ${s.name} is not in this project. ${ext.length ? `External images here: ${ext.map((x) => `${x.reference ?? x.name} (${x.id})`).join(", ")}.` : "The project has no external images."} An external image is added in Constructor first; the API cannot add one.`,
+        );
+      }
+      const { image: _i, ...rest } = s;
+      return { ...rest, image_id: im.id };
+    });
+  }
   async listImages(raw: unknown) {
     const input = listInput.parse(raw);
     await this.project(input.project_id);
@@ -441,6 +505,8 @@ export class DeploymentEngine {
             dockerfile: x.dockerfile,
             tag: x.tag,
             build_status: x.build_status,
+            source: x.source,
+            reference: x.reference,
           })),
       total: results.length,
     };
@@ -578,6 +644,11 @@ export class DeploymentEngine {
         )
           bad("Service overrides must be unique.");
         const images = op.project_id ? await this.images(op.project_id) : [];
+        if (op.project_id)
+          input.services = await this.resolveImages(
+            op.project_id,
+            input.services,
+          );
         for (const override of input.services as ServiceInput[]) {
           const at = next.findIndex((s) => s.name === override.name);
           if (at < 0)
@@ -587,7 +658,8 @@ export class DeploymentEngine {
           if (
             override.image_id &&
             !images.some(
-              (im) => im.id === override.image_id && im.build_status === "done",
+              (im) =>
+                im.id === override.image_id && DeploymentEngine.usable(im),
             )
           )
             bad("Replacement image is not successfully built in this project.");
@@ -868,19 +940,23 @@ export class DeploymentEngine {
     try {
       await this.mutate(
         op,
-        "PATCH",
-        this.root(project),
-        { deployment_enabled: true },
+        "POST",
+        this.root(project) + "/deployment",
+        { enabled: true },
         () => {
           op.status = "preparing";
         },
       );
     } catch (err) {
-      if (err instanceof ToolError && err.status === 403)
+      // Only the project owner may switch it on (421, error 40005); older servers answer 403.
+      if (
+        err instanceof ToolError &&
+        (err.apiCode === 40005 || err.status === 403)
+      )
         throw new ToolError(
           "deployment_disabled",
-          "Deployment is switched off for this project, and the access key may not switch it on. Ask the user to switch on deployment for the project in Constructor, then repeat the same call.",
-          403,
+          "Deployment is switched off for this project, and only the project owner can switch it on. Ask the project owner to switch on deployment for the project in Constructor, then repeat the same call.",
+          err.status,
           err.apiCode,
         );
       throw err;
@@ -1073,9 +1149,9 @@ export class DeploymentEngine {
         bad(`New service ${s.name} requires image_id or build.`);
       if (s.image_id) {
         const im = images.find((x) => x.id === s.image_id);
-        if (!im || im.build_status !== "done")
+        if (!DeploymentEngine.usable(im))
           bad(
-            `Image for ${s.name} is missing or not successfully built in this project.`,
+            `Image for ${s.name} is missing, or not successfully built, in this project.`,
           );
       }
       const hw = hardwareFor(s, old);

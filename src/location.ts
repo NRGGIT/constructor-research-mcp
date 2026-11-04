@@ -9,7 +9,7 @@ export type Scope = "desk" | "project" | "deploy";
 /** Tool-facing schema: the engine schema plus desk_url, with the IDs it supplies made optional. */
 export function located(
   schema: z.ZodObject<any>,
-  scope: Exclude<Scope, "deploy">,
+  _scope: Exclude<Scope, "deploy">,
   /** Inside a desk the IDs default to it, so neither a link nor IDs are required. */
   implied = false,
 ) {
@@ -28,13 +28,9 @@ export function located(
     .refine(
       (x: any) =>
         !!x.desk_url ||
-        (!!x.project_id &&
-          (scope !== "desk" ||
-            !!x.desk_id ||
-            schema.shape.desk_id.safeParse(undefined).success)),
-      scope === "desk"
-        ? "Provide desk_url (the desk link from the browser) or project_id and desk_id."
-        : "Provide desk_url (the desk link from the browser) or project_id.",
+        // Without desk_id the MCP picks the project's only desk, or asks which one.
+        !!x.project_id,
+      "Provide desk_url (the desk link from the browser) or project_id.",
     );
 }
 

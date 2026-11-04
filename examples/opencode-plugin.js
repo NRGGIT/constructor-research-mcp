@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 const WAIT = [
   "-y",
   "-p",
-  "constructor-research-mcp@beta",
+  "constructor-research-mcp@latest",
   "constructor-research-wait",
 ];
 // Any CONSTRUCTOR_* settings your MCP entry sets besides the defaults.
