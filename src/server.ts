@@ -13,6 +13,22 @@ import { LogFollower, type LogKind } from "./logs.js";
 const RULES =
   "Dockerfile rules: one Dockerfile per service named Dockerfile or <name>.dockerfile; docker-compose is not supported. The Dockerfile must build everything itself; no separate setup script the user runs before the build. The app listens on 0.0.0.0 on a fixed port; only one port per service can be public. Services reach each other through internal references (bare host:port by default, http:// only when scheme is set), never localhost; do not bake compose-style fallback hosts (http://db:5432) into ENV. Files uploaded to a desk lose the executable bit: RUN chmod 0755 any entrypoint script you COPY. In nginx configs use only the IPv4 listen line. A volume belongs to one service; services cannot share a volume. Volume data survives restarts and image changes but is wiped if the service is deleted or the volume is removed or changed. The build context is the folder containing the Dockerfile, exactly like a local docker build in that folder. Test the image locally (docker build/run) before uploading.";
 import { located, resolveDeskUrl, type Scope } from "./location.js";
+import { deskInstructions, diskPath } from "./desk.js";
+
+/** Tools whose project and desk default to the desk the MCP runs inside. */
+const DESK_DEFAULT = new Set([
+  "build_image",
+  "list_images",
+  "list_files",
+  "create_folder",
+  "sync_files",
+  "move_path",
+  "delete_path",
+  "deploy_app",
+  "update_app",
+  "start_app",
+  "stop_app",
+]);
 import { ZodError } from "zod";
 import {
   buildInput,
@@ -55,6 +71,32 @@ async function main() {
           const b = x.build;
           if (!b?.local_path) {
             services.push(x);
+            continue;
+          }
+          // Inside the desk the MCP runs in, its project folder is the disk: nothing to upload.
+          const here = config.localDesk;
+          if (here && b.desk_id === here.deskId) {
+            const at = diskPath(here, b.local_path);
+            if (!at)
+              throw new ToolError(
+                "invalid_input",
+                `Service ${x.name}: local_path ${b.local_path} is outside this desk's project folder ${here.root}, which is the desk's disk. Move the sources into ${here.root}, then call again.`,
+              );
+            const { local_path: _l, remote_path: _r, ...rest } = b;
+            services.push({
+              ...x,
+              build: {
+                ...rest,
+                dockerfile:
+                  "/" +
+                  [
+                    ...at.split("/"),
+                    ...(b.dockerfile ?? "Dockerfile").split("/"),
+                  ]
+                    .filter(Boolean)
+                    .join("/"),
+              },
+            });
             continue;
           }
           if (!b.desk_id || !a.project_id)
@@ -149,10 +191,20 @@ async function main() {
           }
         : result;
     };
+  /** Inside a desk, the agent edits its files in place instead of asking for a desk link. */
+  const withDesk = (text: string) =>
+    config.localDesk
+      ? text.replace(
+          /Where to act: ask the user for the Constructor desk link.*?if the user has not said where to deploy or where files live, ask\. /,
+          deskInstructions(config.localDesk) + " ",
+        )
+      : text;
   const server = new McpServer(
     { name: "constructor-research", version: VERSION },
     {
-      instructions: `Sign-in: the MCP works with one Constructor, https://constructor.app unless the user signed in to another. When the user asks to sign in, or names their Constructor or gives a link from it (e.g. https://acme.constructor.app), call sign_in with url set to that link. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project or desk yourself; if the user has not said where to deploy or where files live, ask. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+      instructions: withDesk(
+        `Sign-in: the MCP works with one Constructor, https://constructor.app unless the user signed in to another. When the user asks to sign in, or names their Constructor or gives a link from it (e.g. https://acme.constructor.app), call sign_in with url set to that link. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project or desk yourself; if the user has not said where to deploy or where files live, ask. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+      ),
     },
   );
   const register = (
@@ -164,7 +216,9 @@ async function main() {
     budget = 20000,
     scope?: Scope,
   ) => {
-    if (scope && scope !== "deploy") schema = located(schema, scope);
+    const here =
+      config.localDesk && DESK_DEFAULT.has(name) ? config.localDesk : undefined;
+    if (scope && scope !== "deploy") schema = located(schema, scope, !!here);
     server.registerTool(
       name,
       {
@@ -210,7 +264,17 @@ async function main() {
             fn(
               scope
                 ? resolveDeskUrl(
-                    args,
+                    // Inside a desk, a call that names no other desk acts on it.
+                    here &&
+                      !args?.desk_url &&
+                      (!args?.project_id ||
+                        args.project_id === here.projectId) &&
+                      (!args?.desk_id || args.desk_id === here.deskId)
+                      ? {
+                          ...args,
+                          desk_url: `${config.baseUrl}/research/projects/${here.projectId}/desks/${here.deskId}`,
+                        }
+                      : args,
                     config.baseUrl,
                     scope,
                     config.baseUrlFixed,
@@ -420,7 +484,7 @@ async function main() {
           if (config.baseUrlFixed && host !== config.baseUrl)
             throw new ToolError(
               "wrong_environment",
-              `This MCP is fixed to ${config.baseUrl} by CONSTRUCTOR_BASE_URL; it cannot sign in to ${host}.`,
+              `This MCP is fixed to ${config.baseUrl} by CONSTRUCTOR_BASE_URL or the desk it runs in; it cannot sign in to ${host}.`,
             );
         }
         const signedIn = (await sessionHost(config.cookieFile)) === host;

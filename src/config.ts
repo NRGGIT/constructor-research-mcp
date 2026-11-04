@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { localDeskFromEnv, type LocalDesk } from "./desk.js";
 export interface Config {
   /** The Constructor the MCP works with: the signed-in one, unless CONSTRUCTOR_BASE_URL fixes it. */
   baseUrl: string;
   baseUrlFixed?: boolean;
+  /** The Constructor desk this MCP runs inside (VS Code in Constructor Research), if any. */
+  localDesk?: LocalDesk;
   apiPath: string;
   storagePath?: string;
   /** Build-log service root; build logs stream only while a build runs. */
@@ -51,7 +54,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
         "CONSTRUCTOR_BASE_URL must be an origin without a path or credentials.",
       );
   }
-  const baseUrl = originOf(fixed ?? DEFAULT_BASE_URL);
+  // Inside a Constructor desk, its Constructor is the one to work with.
+  const localDesk = localDeskFromEnv(env, originOf);
+  const baseUrl = originOf(fixed ?? localDesk?.server ?? DEFAULT_BASE_URL);
   const apiPath = env.CONSTRUCTOR_API_PATH ?? "/api/platform-account";
   if (!/^\/[a-zA-Z0-9/_-]+$/.test(apiPath) || apiPath.includes("//"))
     throw new Error("Invalid CONSTRUCTOR_API_PATH.");
@@ -65,7 +70,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     resolve(s.startsWith("~/") ? homedir() + s.slice(1) : s);
   return {
     baseUrl,
-    baseUrlFixed: !!fixed,
+    baseUrlFixed: !!fixed || !!localDesk?.server,
+    localDesk,
     apiPath: apiPath.replace(/\/$/, ""),
     storagePath: storagePath.replace(/\/$/, ""),
     keeperPath: keeperPath.replace(/\/$/, ""),

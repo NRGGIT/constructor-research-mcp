@@ -9,7 +9,15 @@ export type Scope = "desk" | "project" | "deploy";
 export function located(
   schema: z.ZodObject<any>,
   scope: Exclude<Scope, "deploy">,
+  /** Inside a desk the IDs default to it, so neither a link nor IDs are required. */
+  implied = false,
 ) {
+  const extended = schema.extend({
+    project_id: id.optional(),
+    ...("desk_id" in schema.shape ? { desk_id: id.optional() } : {}),
+    desk_url: deskUrl.optional(),
+  });
+  if (implied) return extended;
   return schema
     .extend({
       project_id: id.optional(),
@@ -54,7 +62,7 @@ export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
     bad(
       "wrong_environment",
       fixed
-        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL. Ask the user for a link from ${base}.`
+        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL or the desk it runs in. Ask the user for a link from ${base}.`
         : `The link is for ${url.origin}, but the user is signed in to ${base}. If they work on ${url.origin}, tell them a sign-in window is about to open, then call sign_in with url set to this link; that replaces the sign-in to ${base}.`,
     );
   return { project_id: m[1], desk_id: m[2] };

@@ -72,11 +72,23 @@ The session belongs to the Constructor the cURL was sent to. It keeps the refres
 | `CONSTRUCTOR_STORAGE_PATH`          | `/api/platform-storage`                                                                  |
 | `CONSTRUCTOR_COOKIE_FILE`           | unset: `~/.config/constructor-research/sessions/<harness>.txt`                           |
 | `CONSTRUCTOR_BROWSER`               | first Chrome, Edge, Chromium or Brave found                                              |
+| `CONSTRUCTOR_DESK_ROOT`             | `~/project` (inside a desk only)                                                         |
 | `CONSTRUCTOR_STATE_DIR`             | `~/.local/state/constructor-research-mcp`                                                |
 | `CONSTRUCTOR_UPLOAD_SETTLE_SECONDS` | `30`                                                                                     |
 | `CONSTRUCTOR_READINESS_SECONDS`     | `60`                                                                                     |
 
 HTTPS is required except on localhost. API-key authentication is not implemented yet.
+
+## Inside a Constructor desk (VS Code)
+
+When the MCP runs in VS Code inside a Constructor Research desk, it finds that desk from the environment Constructor sets there (`ROLOS_PROJECT_ID`/`RESEARCH_PROJECT_ID`, `ROLOS_DESK_ID`/`RESEARCH_DESK_ID`, `ROLOS_API_SERVER`/`RESEARCH_API_SERVER`) and works in it:
+
+- the desk's project folder (`~/project`, or `CONSTRUCTOR_DESK_ROOT`) is its disk, so the agent creates and changes files there directly; nothing is uploaded, and `sync_files`, `list_files`, `create_folder`, `move_path` and `delete_path` answer `local_desk` for this desk;
+- `build_image`, `deploy_app`, `update_app`, `start_app`, `stop_app` and `list_images` act on this desk and project without a desk link; a `desk_url` or other IDs still name another desk;
+- `build.dockerfile` is the path inside the project folder (`/backend/Dockerfile`), or `build.local_path` names a folder inside it; Dockerfiles are checked from the local files;
+- the MCP works with the desk's Constructor (`ROLOS_API_SERVER`) unless `CONSTRUCTOR_BASE_URL` is set.
+
+`CONSTRUCTOR_LOCAL_DESK=0` turns this off.
 
 ## Fourteen tools
 
