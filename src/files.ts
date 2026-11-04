@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, open, readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { localPath, type LocalDesk } from "./desk.js";
 import { PlatformApi, ToolError } from "./api.js";
 import type { DeploymentEngine } from "./deployment.js";
 import {
@@ -245,8 +246,24 @@ export class FileManager {
     );
   }
 
+  /** The desk this MCP runs inside, when `desk` is it. */
+  private here(desk: string): LocalDesk | undefined {
+    const d = this.api.config.localDesk;
+    return d && d.deskId === desk ? d : undefined;
+  }
+  /** File tools never touch the desk the MCP runs in: its files are local. */
+  private notHere(desk: string) {
+    const d = this.here(desk);
+    if (d)
+      throw new ToolError(
+        "local_desk",
+        `This MCP runs inside desk ${desk}: its disk is the local folder ${d.root}. Read and change files there directly with your own file and shell tools; nothing needs uploading. When the Dockerfile is ready, call deploy_app or build_image with the Dockerfile path inside ${d.root} (for example /Dockerfile).`,
+      );
+  }
+
   async list(raw: unknown) {
     const i = listFilesInput.parse(raw);
+    this.notHere(i.desk_id);
     await this.engine.filesDesk(i.project_id, i.desk_id);
     const start = segs(i.path);
     const entries: Entry[] = [];
@@ -280,6 +297,7 @@ export class FileManager {
 
   async createFolder(raw: unknown) {
     const i = createFolderInput.parse(raw);
+    this.notHere(i.desk_id);
     await this.engine.filesDesk(i.project_id, i.desk_id);
     const parts = segs(i.path);
     const created: string[] = [];
@@ -298,6 +316,7 @@ export class FileManager {
 
   async move(raw: unknown) {
     const i = movePathInput.parse(raw);
+    this.notHere(i.desk_id);
     await this.engine.filesDesk(i.project_id, i.desk_id);
     const desk = i.desk_id;
     const plan: { from: string; to: string; type?: string; issue?: string }[] =
@@ -370,6 +389,7 @@ export class FileManager {
 
   async remove(raw: unknown) {
     const i = deletePathInput.parse(raw);
+    this.notHere(i.desk_id);
     await this.engine.filesDesk(i.project_id, i.desk_id);
     const desk = i.desk_id;
     const targets: {
@@ -436,6 +456,7 @@ export class FileManager {
 
   async sync(raw: unknown) {
     const i = syncFilesInput.parse(raw);
+    this.notHere(i.desk_id);
     const begun = Date.now();
     await this.engine.filesDesk(i.project_id, i.desk_id);
     const desk = i.desk_id;
@@ -691,6 +712,11 @@ export class FileManager {
     const missing: string[] = [];
     const warnings: string[] = [];
     for (const b of sources) {
+      const local = this.here(b.desk_id);
+      if (local) {
+        await this.checkLocal(local, b, missing, warnings);
+        continue;
+      }
       await this.engine.filesDesk(project, b.desk_id);
       const parts = segs(b.dockerfile);
       const r = await this.api.storage("GET", b.desk_id, href(parts));
@@ -734,6 +760,53 @@ export class FileManager {
           );
     }
     return { missing, warnings: [...new Set(warnings)] };
+  }
+
+  /** The same checks as on a disk, for the desk this MCP runs in: its files are local. */
+  private async checkLocal(
+    desk: LocalDesk,
+    b: BuildSource,
+    missing: string[],
+    warnings: string[],
+  ) {
+    const parts = segs(b.dockerfile);
+    let text: string;
+    try {
+      text = (await readFile(localPath(desk, b.dockerfile), "utf8")).slice(
+        0,
+        256 * 1024,
+      );
+    } catch {
+      missing.push(`${b.service}: ${parts.join("/")} (in ${desk.root})`);
+      return;
+    }
+    warnings.push(
+      ...lintDockerfile(parts.join("/"), text, b.ports).map(
+        (w) => `${b.service}: ${w}`,
+      ),
+    );
+    const dir = parts.slice(0, -1);
+    for (const conf of configsCopied(text)) {
+      const body = await readFile(
+        localPath(desk, [...dir, ...segs(conf)].join("/")),
+        "utf8",
+      ).then(
+        (t) => t.slice(0, 64 * 1024),
+        () => "",
+      );
+      if (/^\s*listen\s+\[::\]/m.test(body))
+        warnings.push(
+          `${b.service}: ${conf} has "listen [::]". nginx exits on start when the cluster has no IPv6; keep only the IPv4 listen line (listen <port>;).`,
+        );
+    }
+    const names = await readdir(localPath(desk, dir.join("/"))).catch(
+      () => [] as string[],
+    );
+    for (const name of names)
+      if (/^(docker-)?compose\.ya?ml$/.test(name))
+        warnings.push(
+          `${b.service}: ${[...dir, name].join("/")} is ignored; docker-compose is not supported, so each service is configured in deploy_app.`,
+        );
   }
 
   /** Upload to a fresh temp file, move it over the target, then verify the server checksum. */

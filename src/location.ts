@@ -10,7 +10,15 @@ export type Scope = "desk" | "project" | "deploy";
 export function located(
   schema: z.ZodObject<any>,
   scope: Exclude<Scope, "deploy">,
+  /** Inside a desk the IDs default to it, so neither a link nor IDs are required. */
+  implied = false,
 ) {
+  const extended = schema.extend({
+    project_id: id.optional(),
+    ...("desk_id" in schema.shape ? { desk_id: id.optional() } : {}),
+    desk_url: deskUrl.optional(),
+  });
+  if (implied) return extended;
   return schema
     .extend({
       project_id: id.optional(),
@@ -55,7 +63,7 @@ export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
     bad(
       "wrong_environment",
       fixed
-        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL. Ask the user for a link from ${base}.`
+        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL or the desk it runs in. Ask the user for a link from ${base}.`
         : `The link is for ${url.origin}, but the saved access key is for ${base}. If they work on ${url.origin}, the user saves a key for it in a terminal (it replaces the key for ${base}): npx -y -p constructor-research-mcp@${VERSION} constructor-research-set-key ${url.origin}. Never ask for the key in the chat.`,
     );
   return { project_id: m[1], desk_id: m[2] };
