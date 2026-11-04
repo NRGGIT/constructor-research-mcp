@@ -8,24 +8,32 @@ The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research:
 - a personal access key (`rk-…`) for your Constructor
 - macOS, Windows or Linux
 
-## 1. Add it to your tool
+## 1. Add it to your tool, with your key
+
+The key is required: the MCP does nothing without it. The address is `https://constructor.app`; if your organisation has its own Constructor, use its address instead (e.g. `https://acme.constructor.app`). Replace `rk-your-key` with your key.
 
 **Claude Code**: run once:
 
 ```sh
-claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta
+claude mcp add --scope user constructor-research \
+  -e CONSTRUCTOR_BASE_URL=https://constructor.app \
+  -e CONSTRUCTOR_ACCESS_KEY=rk-your-key \
+  -- npx -y constructor-research-mcp@beta
 ```
 
 On Windows (not WSL), use this instead:
 
 ```bat
-claude mcp add --scope user constructor-research -- cmd /c npx -y constructor-research-mcp@beta
+claude mcp add --scope user constructor-research -e CONSTRUCTOR_BASE_URL=https://constructor.app -e CONSTRUCTOR_ACCESS_KEY=rk-your-key -- cmd /c npx -y constructor-research-mcp@beta
 ```
 
 **Codex**: run once:
 
 ```sh
-codex mcp add constructor-research -- npx -y constructor-research-mcp@beta
+codex mcp add constructor-research \
+  --env CONSTRUCTOR_BASE_URL=https://constructor.app \
+  --env CONSTRUCTOR_ACCESS_KEY=rk-your-key \
+  -- npx -y constructor-research-mcp@beta
 ```
 
 The first start downloads the package and can exceed Codex's 10-second start limit. If Codex reports a timeout, restart it once, or add `startup_timeout_sec = 60` under `[mcp_servers.constructor-research]` in `~/.codex/config.toml`. The full entry, if you prefer to write it by hand:
@@ -36,21 +44,13 @@ command = "npx"
 args = ["-y", "constructor-research-mcp@beta"]
 startup_timeout_sec = 60
 tool_timeout_sec = 30
+
+[mcp_servers.constructor-research.env]
+CONSTRUCTOR_BASE_URL = "https://constructor.app"
+CONSTRUCTOR_ACCESS_KEY = "rk-your-key"
 ```
 
-**OpenCode**: run once; it adds the entry to your OpenCode config and keeps what is already there. Check your version with `opencode --version`. OpenCode 2.x:
-
-```sh
-opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@beta
-```
-
-Without `--global`, OpenCode 2.x adds it to the current folder's project config instead. OpenCode 1.x has no `--global` and writes to your user config when run outside a project:
-
-```sh
-opencode mcp add constructor-research -- npx -y constructor-research-mcp@beta
-```
-
-Or add it by hand to `~/.config/opencode/opencode.json` (or a project's `opencode.json`). This is the 1.x layout; in 2.x the entry goes one level deeper, under `mcp.servers`, as in [examples/opencode-v2.json](examples/opencode-v2.json):
+**OpenCode**: add the entry to `~/.config/opencode/opencode.json` (or a project's `opencode.json`), keeping what is already there. Check your version with `opencode --version`. OpenCode 1.x:
 
 ```json
 {
@@ -58,29 +58,33 @@ Or add it by hand to `~/.config/opencode/opencode.json` (or a project's `opencod
   "mcp": {
     "constructor-research": {
       "type": "local",
-      "command": ["npx", "-y", "constructor-research-mcp@beta"]
+      "command": ["npx", "-y", "constructor-research-mcp@beta"],
+      "environment": {
+        "CONSTRUCTOR_BASE_URL": "https://constructor.app",
+        "CONSTRUCTOR_ACCESS_KEY": "rk-your-key"
+      }
     }
   }
 }
 ```
 
-Do not put the key in these settings unless you have to; the next step saves it where every tool finds it.
-
-## 2. Save your access key
-
-In a terminal, run this with your Constructor's address and paste the key when asked (it is not shown):
-
-```sh
-npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acme.constructor.app
-```
-
-It checks the key with Constructor and saves it, with that address, to `~/.config/constructor-research/access-key.json` (readable only by you). Claude Code, Codex and OpenCode all use this one key, and the MCP works with that Constructor. To switch Constructor or replace a revoked key, run it again. Never paste the key into the chat.
+In 2.x the entry goes one level deeper, under `mcp.servers`, as in [examples/opencode-v2.json](examples/opencode-v2.json), with the same `environment`.
 
 Then restart the tool, or run `/mcp` in Claude Code, so it starts the MCP. The first start downloads it and can take a minute.
 
+## 2. Or keep the key out of the tool's settings
+
+Step 1 stores the key in the tool's settings file (`~/.claude.json`, `~/.codex/config.toml`, `opencode.json`). To avoid that, add the MCP without the two variables (`claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta`, and the same for Codex and OpenCode) and save the key in a terminal; it asks for the key without showing it:
+
+```sh
+npx -y -p constructor-research-mcp@beta constructor-research-set-key https://constructor.app
+```
+
+It checks the key with Constructor and saves it, with that address, to `~/.config/constructor-research/access-key.json` (readable only by you). Claude Code, Codex, OpenCode and the wait hooks all use this one file, and a new key needs no restart. To switch Constructor or replace a revoked key, run it again. A key set in the tool's settings wins over the file. Never paste the key into the chat.
+
 ## 3. Optional: get told when a deployment finishes
 
-Builds can take many minutes. These add-ons wake the agent when a deployment it started finishes:
+Builds can take many minutes. These add-ons wake the agent when a deployment it started finishes. They do not see the MCP settings: with the key in step 1, also save it with `set-key` (step 2), or give the hooks the same two variables.
 
 - Claude Code: merge [examples/claude-hooks.json](examples/claude-hooks.json) into `~/.claude/settings.json`.
 - Codex: copy [examples/codex-hooks.json](examples/codex-hooks.json) to `~/.codex/hooks.json`, then trust it in `/hooks`.

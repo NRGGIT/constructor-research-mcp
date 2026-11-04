@@ -6,37 +6,35 @@ Local stdio MCP for Codex CLI, Claude Code and OpenCode. Submit the whole applic
 
 ## Install
 
-You need Node.js 22+. Then add the MCP to your tool.
+You need Node.js 22+ and your personal access key (`rk-…`); the MCP does not work without it. Add the MCP with the key; the address is `https://constructor.app` unless your organisation has its own Constructor (e.g. `https://acme.constructor.app`).
 
 **Claude Code**
 
 ```sh
-claude mcp add --scope user constructor-research -- npx -y constructor-research-mcp@beta
+claude mcp add --scope user constructor-research \
+  -e CONSTRUCTOR_BASE_URL=https://constructor.app \
+  -e CONSTRUCTOR_ACCESS_KEY=rk-your-key \
+  -- npx -y constructor-research-mcp@beta
 ```
 
 **Codex**
 
 ```sh
-codex mcp add constructor-research -- npx -y constructor-research-mcp@beta
+codex mcp add constructor-research \
+  --env CONSTRUCTOR_BASE_URL=https://constructor.app \
+  --env CONSTRUCTOR_ACCESS_KEY=rk-your-key \
+  -- npx -y constructor-research-mcp@beta
 ```
 
-**OpenCode 2.x**
+**OpenCode**: add the entry to `~/.config/opencode/opencode.json` (layouts for 1.x and 2.x in [INSTALL.md](INSTALL.md)).
 
-```sh
-opencode mcp add --global constructor-research -- npx -y constructor-research-mcp@beta
-```
+Then restart the tool and ask the agent anything about Constructor. Windows notes, the optional wake-up hooks and troubleshooting are in [INSTALL.md](INSTALL.md). Restarting the tool picks up a new version.
 
-**OpenCode 1.x** (no `--global` there):
-
-```sh
-opencode mcp add constructor-research -- npx -y constructor-research-mcp@beta
-```
-
-Then save your personal access key (see below), restart the tool and ask the agent anything about Constructor. Windows notes, the optional wake-up hooks and troubleshooting are in [INSTALL.md](INSTALL.md). Restarting the tool picks up a new version.
+The key then sits in the tool's settings file (`~/.claude.json`, `~/.codex/config.toml`, `opencode.json`). To keep it out of there, add the MCP without the two variables and save the key with `set-key` (below).
 
 ## Access key and connection
 
-The MCP uses only a personal access key (`rk-…`) from Constructor's public API; there is no browser sign-in. Every request carries it as `X-Research-AccessKey: Bearer rk-…`, to the account API (`/api/platform-account/v1`), the desk storage (WebDAV) and the logs alike. The key never goes through the chat: the user saves it in a terminal, where it is read hidden, checked against Constructor and saved:
+The MCP uses only a personal access key (`rk-…`) from Constructor's public API; there is no browser sign-in. Every request carries it as `X-Research-AccessKey: Bearer rk-…`, to the account API (`/api/platform-account/v1`), the desk storage (WebDAV) and the logs alike. The key never goes through the chat. It comes from the MCP settings (`CONSTRUCTOR_ACCESS_KEY`, with `CONSTRUCTOR_BASE_URL`, as in Install), or from a key file the user saves in a terminal, where the key is read hidden, checked against Constructor and saved:
 
 ```sh
 npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acme.constructor.app
@@ -44,7 +42,7 @@ npx -y -p constructor-research-mcp@beta constructor-research-set-key https://acm
 
 It goes to `~/.config/constructor-research/access-key.json` (mode 600) together with the Constructor it belongs to, and the MCP works with that Constructor. All harnesses (Claude Code, Codex, OpenCode) and the wait command share this one file. Every request rereads it, so a new key needs no restart. A key is never sent to a Constructor other than the one it was saved for.
 
-Instead of the file, `CONSTRUCTOR_ACCESS_KEY` (with `CONSTRUCTOR_BASE_URL`) can be set in the MCP settings; it takes precedence. The wait hooks do not see the MCP settings, so with this option they need the same variables in their own environment.
+`CONSTRUCTOR_ACCESS_KEY` in the MCP settings takes precedence over the file. The wait hooks do not see the MCP settings: with the key there, give the hooks the same two variables in their own environment, or save the key with `set-key` as well.
 
 Without a key, or when Constructor rejects it (401: revoked, expired or for another Constructor), tools return `needs_key` with the command above; a deployment pauses as `needs_key` and resumes on the next check once a valid key is saved. A desk link from another Constructor returns `wrong_environment`.
 
