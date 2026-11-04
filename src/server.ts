@@ -7,7 +7,9 @@ import { StateStore } from "./store.js";
 import { DeploymentEngine } from "./deployment.js";
 import { DeploymentRuntime } from "./runtime.js";
 import { FileManager, dockerignore, type BuildSource } from "./files.js";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { LogFollower, type LogKind } from "./logs.js";
 
 const RULES =
@@ -60,17 +62,48 @@ async function main() {
     async (a: any) => {
       const begun = Date.now();
       if (!single && a.project_id && a.services) {
-        // External images by reference or name; builds without a desk go to the project's desk.
+        // Images the project has by reference or name; builds without a desk go to the project's desk.
         let services = await engine.resolveImages(a.project_id, a.services);
-        if (services.some((x: any) => x.build && !x.build.desk_id)) {
-          const desk = await engine.deskFor(
-            a.project_id,
-            `${a.application_name ?? "application"}-source`,
-          );
-          services = services.map((x: any) =>
-            x.build && !x.build.desk_id
-              ? { ...x, build: { ...x.build, desk_id: desk } }
-              : x,
+        if (
+          services.some((x: any) => x.image || (x.build && !x.build.desk_id))
+        ) {
+          const here = config.localDesk;
+          const desk =
+            here && a.project_id === here.projectId
+              ? here.deskId
+              : await engine.deskFor(
+                  a.project_id,
+                  `${a.application_name ?? "application"}-source`,
+                );
+          services = await Promise.all(
+            services.map(async (x: any) => {
+              if (x.build && !x.build.desk_id)
+                return { ...x, build: { ...x.build, desk_id: desk } };
+              if (!x.image) return x;
+              // A registry image the project does not have: build it from a one-line Dockerfile.
+              if (!/^[a-z0-9][a-z0-9._/:@-]*$/i.test(x.image))
+                throw new ToolError(
+                  "invalid_input",
+                  `Service ${x.name}: invalid image reference.`,
+                );
+              const slug = x.image
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-|-$/g, "")
+                .slice(0, 80);
+              const remote = `.constructor/images/${slug}`;
+              const dir =
+                here && desk === here.deskId
+                  ? join(here.root, remote)
+                  : join(tmpdir(), "constructor-research-images", slug);
+              await mkdir(dir, { recursive: true });
+              await writeFile(join(dir, "Dockerfile"), `FROM ${x.image}\n`);
+              const { image: _i, ...rest } = x;
+              return {
+                ...rest,
+                build: { desk_id: desk, local_path: dir, remote_path: remote },
+              };
+            }),
           );
         }
         a = { ...a, services };
@@ -215,7 +248,7 @@ async function main() {
     { name: "constructor-research", version: VERSION },
     {
       instructions: withDesk(
-        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project yourself; if the user has not said where to deploy or where files live, ask. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. To run an image that is already in the project, such as an external image (registry/repo:tag added in Constructor), pass image with its reference or name, or image_id; list_images shows source and reference. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, call get_deployment(wait_seconds=20) again as often as needed (a loop of such calls is fine); never perform the deployment steps yourself. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project yourself; if the user has not said where to deploy or where files live, ask. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. A service can also take image: a registry reference (repo:tag) that runs unchanged. The MCP uses the copy in the project when there is one (list_images shows source and reference), otherwise builds it from FROM <image>. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, run the wait command that next_action names (with a shell), or call get_deployment(wait_seconds=45) again until it is finished; never perform the deployment steps yourself. Never end the turn while a deployment the user asked for is still running. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
       ),
     },
   );
@@ -281,7 +314,7 @@ async function main() {
                 text:
                   result.text ??
                   (result.status
-                    ? `${result.status}${result.deployment_id ? ` (${result.deployment_id})` : ""}${result.message ? `: ${result.message}` : ""}`
+                    ? `${result.status}${result.deployment_id ? ` (${result.deployment_id})` : ""}${result.message ? `: ${result.message}` : ""}${result.execution === "background" && result.next_action ? `\n${result.next_action}` : ""}`
                     : `Discovery result: ${result.total !== undefined ? result.total + " images" : Object.keys(result).join(", ")}. See structuredContent for details.`),
               },
             ],
@@ -422,11 +455,11 @@ async function main() {
   );
   register(
     "get_deployment",
-    "With deployment_id, observe/wait for background execution; the MCP owns execution. Each call waits up to wait_seconds (max 20); to wait longer, call again, as often as needed (a loop of get_deployment calls is fine), until execution is finished; do not answer the user while it is still in the background. Services carry status_changes and restarts_seen when the MCP saw the status change or a new container start. After sync_files (or manual upload) set files_uploaded=true; after a new key is saved, checking the job resumes it. With no arguments, returns the map of all deployments: every deployment-enabled project with its applications and services (names, native statuses, public URLs, ports). With desk_url or project_id, returns that project's desks, images, hardware and applications; add application_id for one application. resume=false observes only. Never returns environment-variable values.",
+    "With deployment_id, observe/wait for background execution; the MCP owns execution. Each call waits up to wait_seconds (default 45, max 50); to wait longer, call again, as often as needed (a loop of get_deployment calls is fine), until execution is finished; do not answer the user while it is still in the background. Services carry status_changes and restarts_seen when the MCP saw the status change or a new container start. After sync_files (or manual upload) set files_uploaded=true; after a new key is saved, checking the job resumes it. With no arguments, returns the map of all deployments: every deployment-enabled project with its applications and services (names, native statuses, public URLs, ports). With desk_url or project_id, returns that project's desks, images, hardware and applications; add application_id for one application. resume=false observes only. Never returns environment-variable values.",
     getInput,
     (a) => runtime.get(a),
     false,
-    20000,
+    55000,
     "deploy",
   );
   register(

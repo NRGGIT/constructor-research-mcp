@@ -104,7 +104,7 @@ test("the in-progress hint names a wait command with the MCP's own settings", as
     const r = await mcp.deploy(deployment);
     assert.match(
       r.next_action,
-      /wait with the shell command `.*wait\.(js|ts) /,
+      /Run now, in the foreground: `.*wait\.(js|ts) /,
     );
     const command = waitCommand(f.config, [r.deployment_id]);
     assert.match(command, /^CONSTRUCTOR_BASE_URL=http:\/\/127\.0\.0\.1:\d+ /);

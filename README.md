@@ -177,9 +177,9 @@ Private DNS works between containers; browser JavaScript needs a public backend 
 
 ### Image reuse and limits
 
-Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building, or with `"image":"registry/repo:tag"` to name an image already in the project by its reference or name. `list_images` returns compact records with `source` (`desk_build` or `external`), `reference` and `build_status` (`not_started`, `snapshot_creation`, `in_progress`, `done` or `error`); `detailed:true` returns full records.
+Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building, or with `"image":"registry/repo:tag"` to run a registry image unchanged, such as `jgraph/drawio:latest` from Docker Hub. Which of `build`, `image` and `image_id` fits is the agent's choice; the tool descriptions say what each one does. `list_images` returns compact records with `source` (`desk_build` or `external`), `reference` and `build_status` (`not_started`, `snapshot_creation`, `in_progress`, `done` or `error`); `detailed:true` returns full records.
 
-External images (`source: external`) are pulled, not built, so they are accepted whatever their build status, unless it is `error`. They are added to the project in Constructor: the public API has no endpoint to add one, so `image` only finds images that are already there and lists the project's external images when nothing matches.
+With `image`, the MCP first looks for it in the project (by `reference` or name). External images there (`source: external`) are pulled, not built, so they are used whatever their build status, unless it is `error`. An image the project does not have is built on the desk from a one-line `FROM <image>` Dockerfile that the MCP writes to `.constructor/images/<name>/`, because the public API cannot add an external image yet.
 
 - Build storage is omitted by default, using the API's documented **50 GB** default. Explicit `ephemeral_build_disk_size_gb` overrides must be **10–1000 GB**.
 - Each service can have multiple ports (1–65535), with at most **one public port**. That port must match where the container listens.

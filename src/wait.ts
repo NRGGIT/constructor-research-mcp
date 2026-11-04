@@ -7,7 +7,9 @@
  */
 import { setTimeout as delay } from "node:timers/promises";
 import { readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { configFromEnv } from "./config.js";
@@ -152,7 +154,71 @@ async function claim(dir: string, id: string) {
   return () => unlink(file).catch(() => {});
 }
 
+/** The hook entry each client needs, as in examples/ (claude-hooks.json, codex-hooks.json). */
+const HOOK =
+  "npx -y -p constructor-research-mcp@latest constructor-research-wait";
+const HOOKS = {
+  codex: {
+    file: () =>
+      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "hooks.json"),
+    event: "Stop",
+    entry: {
+      hooks: [
+        {
+          type: "command",
+          command: `${HOOK} --hook codex`,
+          timeout: 600,
+          statusMessage: "Waiting for Constructor deployments",
+        },
+      ],
+    },
+    next: "Restart Codex and trust the new hook in /hooks.",
+  },
+  "claude-code": {
+    file: () =>
+      join(
+        process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
+        "settings.json",
+      ),
+    event: "PostToolUse",
+    entry: {
+      matcher:
+        "mcp__constructor-research__(deploy_app|update_app|build_image|start_app|stop_app|get_deployment)",
+      hooks: [
+        {
+          type: "command",
+          command: `${HOOK} --hook claude-code`,
+          asyncRewake: true,
+        },
+      ],
+    },
+    next: "Restart Claude Code.",
+  },
+} as const;
+
+/** Add the wait hook to the client's settings once; other settings and hooks stay as they are. */
+export async function installHook(client: keyof typeof HOOKS, file?: string) {
+  const h = HOOKS[client];
+  const path = file ?? h.file();
+  let settings: any = {};
+  try {
+    settings = JSON.parse(await readFile(path, "utf8"));
+  } catch (err: any) {
+    if (err?.code !== "ENOENT")
+      throw new Error(`${path} is not valid JSON; nothing was changed.`);
+  }
+  settings.hooks ??= {};
+  const list: any[] = (settings.hooks[h.event] ??= []);
+  if (JSON.stringify(list).includes("constructor-research-wait"))
+    return { path, added: false, next: h.next };
+  list.push(h.entry);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(settings, null, 2) + "\n");
+  return { path, added: true, next: h.next };
+}
+
 const USAGE = `Usage: constructor-research-wait [deployment_id ...] [--max-minutes N] [--hook claude-code|codex|opencode]
+       constructor-research-wait --install codex|claude-code
 
 Waits until the deployments finish (all in-progress ones when no ID is given) and prints one line each.
 Exit codes: 0 finished, 2 needs the user (failed, key, upload, confirmation), 3 still running at the
@@ -160,7 +226,8 @@ time limit, 4 nothing to wait for, 1 usage error.
 
 --hook claude-code  PostToolUse hook with asyncRewake: waits for the deployment in the tool result and
                     wakes Claude with the outcome (exit 2). opencode: the same, for the plugin.
---hook codex        Stop hook: waits for in-progress deployments, then continues the turn with the outcome.`;
+--hook codex        Stop hook: waits for in-progress deployments, then continues the turn with the outcome.
+--install CLIENT    Add that hook to ~/.codex/hooks.json or ~/.claude/settings.json (once; nothing else changes).`;
 
 async function main(argv: string[]) {
   const ids: string[] = [];
@@ -168,6 +235,23 @@ async function main(argv: string[]) {
   let minutes: number | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === "--install") {
+      const client = argv[++i];
+      if (client !== "codex" && client !== "claude-code") {
+        console.error(USAGE);
+        return EXIT.error;
+      }
+      try {
+        const r = await installHook(client);
+        console.log(
+          `${r.added ? "Added the wait hook to" : "The wait hook is already in"} ${r.path}. ${r.next} The hook reads the access key from the key file (constructor-research-set-key), not from the MCP settings.`,
+        );
+        return EXIT.done;
+      } catch (err: any) {
+        console.error(err?.message ?? String(err));
+        return EXIT.error;
+      }
+    }
     if (a === "--hook") hook = argv[++i];
     else if (a === "--max-minutes") minutes = Number(argv[++i]);
     else if (a === "-h" || a === "--help") {

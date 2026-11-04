@@ -75,6 +75,15 @@ const wait = z
   .describe(
     "Wait up to this many seconds for completion; execution continues in the MCP after the response.",
   );
+/** get_deployment only: longer, so fewer calls; stays under the 60 s tool timeout of Codex. */
+const longWait = z
+  .number()
+  .min(0)
+  .max(50)
+  .default(45)
+  .describe(
+    "Wait up to this many seconds (max 50) for the deployment to finish; it continues in the MCP after the response.",
+  );
 const requestId = z
   .string()
   .min(1)
@@ -154,10 +163,14 @@ export const serviceInput = z
     image: z
       .string()
       .min(1)
-      .max(512)
+      .max(256)
+      .regex(
+        /^[a-z0-9][a-z0-9._\/:@-]*$/i,
+        "image is a registry reference such as jgraph/drawio:latest or ghcr.io/org/app:1.2.",
+      )
       .optional()
       .describe(
-        "An image already in the project, by its reference (registry/repo:tag, for an external image) or its name, as list_images shows them. The MCP turns it into image_id. External images are added in Constructor; the API cannot add them.",
+        "A registry image reference (docker.io/jgraph/drawio:latest, ghcr.io/org/app:1.2) or the name of an image already in the project; the alternative to build and image_id. If the project has it (an external image added in Constructor, or an earlier build), it is used as is. Otherwise the MCP builds it on the desk from a one-line FROM <image> Dockerfile, so the image runs unchanged; to add files or change it, use build with your own Dockerfile. The service's ports must match the port the image listens on.",
       ),
     build: build.optional(),
     hardware: z
@@ -249,7 +262,7 @@ export const getInput = z
     application_id: id.optional(),
     files_uploaded: z.boolean().optional(),
     resume: z.boolean().default(true),
-    wait_seconds: wait,
+    wait_seconds: longWait,
   })
   .refine(
     (x) => !x.application_id || !!x.project_id || !!x.desk_url,

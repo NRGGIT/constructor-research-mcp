@@ -82,13 +82,16 @@ npx -y -p constructor-research-mcp@latest constructor-research-set-key https://c
 
 It checks the key with Constructor and saves it, with that address, to `~/.config/constructor-research/access-key.json` (readable only by you). Claude Code, Codex, OpenCode and the wait hooks all use this one file, and a new key needs no restart. To switch Constructor or replace a revoked key, run it again. A key set in the tool's settings wins over the file. Never paste the key into the chat.
 
-## 3. Optional: get told when a deployment finishes
+## 3. Recommended: wait for builds
 
-Builds can take many minutes. These add-ons wake the agent when a deployment it started finishes. They do not see the MCP settings: with the key in step 1, also save it with `set-key` (step 2), or give the hooks the same two variables.
+Builds take minutes, and some agents (Codex in particular) end their turn before a build finishes, so the user has to ask again. The wait hook keeps the agent on it until the deployment ends. One command adds it, leaving your other settings and hooks as they are:
 
-- Claude Code: merge [examples/claude-hooks.json](examples/claude-hooks.json) into `~/.claude/settings.json`.
-- Codex: copy [examples/codex-hooks.json](examples/codex-hooks.json) to `~/.codex/hooks.json`, then trust it in `/hooks`.
-- OpenCode: copy [examples/opencode-plugin.js](examples/opencode-plugin.js) to `~/.config/opencode/plugins/`.
+```sh
+npx -y -p constructor-research-mcp@latest constructor-research-wait --install codex        # ~/.codex/hooks.json
+npx -y -p constructor-research-mcp@latest constructor-research-wait --install claude-code  # ~/.claude/settings.json
+```
+
+Restart the tool; in Codex, trust the new hook in `/hooks`. The hook only watches the deployments the MCP runs, so it works with the key in the MCP settings too. By hand: merge [examples/codex-hooks.json](examples/codex-hooks.json) or [examples/claude-hooks.json](examples/claude-hooks.json). OpenCode: copy [examples/opencode-plugin.js](examples/opencode-plugin.js) to `~/.config/opencode/plugins/`.
 
 ## Update
 

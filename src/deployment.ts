@@ -462,7 +462,7 @@ export class DeploymentEngine {
     });
     return d.id;
   }
-  /** Turn each service's `image` (reference or name) into the project's image_id. */
+  /** Turn each service's `image` into the project's image_id when the project has it (by reference or name); others are left as `image`. */
   async resolveImages(project: string, services: any[]) {
     if (!services?.some((s) => s.image)) return services;
     const images = await this.images(project);
@@ -479,12 +479,8 @@ export class DeploymentEngine {
               `Image "${want}" for ${s.name} matches several images: ${hits.map((x) => x.id).join(", ")}. Pass image_id.`,
             ))
           : hits[0];
-      if (!im) {
-        const ext = images.filter((x) => x.source === "external");
-        bad(
-          `Image "${want}" for ${s.name} is not in this project. ${ext.length ? `External images here: ${ext.map((x) => `${x.reference ?? x.name} (${x.id})`).join(", ")}.` : "The project has no external images."} An external image is added in Constructor first; the API cannot add one.`,
-        );
-      }
+      // Not in the project: the caller builds it from a one-line FROM Dockerfile.
+      if (!im) return s;
       const { image: _i, ...rest } = s;
       return { ...rest, image_id: im.id };
     });
@@ -648,6 +644,10 @@ export class DeploymentEngine {
           input.services = await this.resolveImages(
             op.project_id,
             input.services,
+          );
+        if (input.services.some((s: any) => s.image))
+          bad(
+            "In a resume, image must name an image already in the project; for a new registry image, send a new deploy_app or update_app.",
           );
         for (const override of input.services as ServiceInput[]) {
           const at = next.findIndex((s) => s.name === override.name);
@@ -1510,7 +1510,7 @@ export class DeploymentEngine {
               ? `${this.api.keyHelp("Constructor rejected the access key, or none is set.")} Then call get_deployment with this deployment_id.`
               : op.status === "needs_upload"
                 ? "Upload files with sync_files, then call get_deployment with files_uploaded=true."
-                : "Execution continues automatically in the MCP. Keep calling get_deployment with wait_seconds=20 until it is finished, then tell the user the result; do not orchestrate individual steps.",
+                : "Execution continues automatically in the MCP. Keep calling get_deployment with wait_seconds=45 until it is finished, then tell the user the result; do not orchestrate individual steps.",
     };
     if (cache) {
       op.result = result;

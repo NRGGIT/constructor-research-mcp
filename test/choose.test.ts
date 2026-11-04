@@ -106,7 +106,7 @@ test("project_id alone: the only desk is used; with several desks the user choos
   }
 });
 
-test("a service runs an external image named by its reference", async () => {
+test("image: an external image in the project is used as is; any other registry image is built from FROM", async () => {
   const f = await platform();
   f.db.images.push({
     id: "ext11111",
@@ -130,20 +130,49 @@ test("a service runs an external image named by its reference", async () => {
     assert.equal(ext.source, "external");
     assert.equal(ext.reference, "docker.io/library/nginx:1.27");
 
-    const missing: any = await client.callTool({
+    f.db.buildStatus = "done";
+    const pulled: any = await client.callTool({
       name: "deploy_app",
       arguments: {
         project_id: P,
-        application_name: "ext",
+        application_name: "drawio",
         wait_seconds: 0,
-        services: [{ name: "web", image: "redis:7" }],
+        services: [
+          {
+            name: "drawio",
+            image: "jgraph/drawio:latest",
+            ports: [{ number: 8080, expose_to_internet: true }],
+          },
+        ],
       },
     });
-    assert.equal(missing.structuredContent.status, "invalid_input");
-    assert.match(
-      missing.structuredContent.message,
-      /docker\.io\/library\/nginx:1\.27 \(ext11111\)/,
+    assert.equal(
+      pulled.isError,
+      undefined,
+      JSON.stringify(pulled.structuredContent),
     );
+    // Not in the project: built on the desk from a one-line Dockerfile the MCP wrote.
+    assert.equal(
+      f.db.dav
+        .get(".constructor/images/jgraph-drawio-latest/Dockerfile")
+        ?.toString(),
+      "FROM jgraph/drawio:latest\n",
+    );
+    await until(
+      () =>
+        f.db.images.some(
+          (i: any) =>
+            i.dockerfile ===
+            "/.constructor/images/jgraph-drawio-latest/Dockerfile",
+        ),
+      "registry image was not built",
+    );
+    await until(
+      () => f.db.applications.some((a: any) => a.services?.length),
+      "drawio service was not created",
+    );
+    f.db.applications.length = 0;
+    const builds = f.db.images.length;
 
     const r: any = await client.callTool({
       name: "deploy_app",
@@ -168,9 +197,38 @@ test("a service runs an external image named by its reference", async () => {
         ),
       "service with the external image was not created",
     );
-    assert.ok(!f.db.mutations.some((m: any) => /\/images$/.test(m.path ?? "")));
+    // The external image is used as is: nothing is built for it.
+    assert.equal(f.db.images.length, builds);
   } finally {
     await client.close();
     await f.close();
   }
+});
+
+test("the wait hook is added once, keeping other settings", async () => {
+  const { installHook } = await import("../src/wait.js");
+  const { mkdtemp, readFile, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "hooks-"));
+  const file = join(dir, "hooks.json");
+  await writeFile(
+    file,
+    JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "other" }] }] },
+    }),
+  );
+  assert.equal((await installHook("codex", file)).added, true);
+  assert.equal((await installHook("codex", file)).added, false);
+  const saved = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(saved.hooks.Stop.length, 2);
+  assert.match(
+    saved.hooks.Stop[1].hooks[0].command,
+    /constructor-research-wait --hook codex/,
+  );
+  const claude = join(dir, "settings.json");
+  await writeFile(claude, JSON.stringify({ model: "x" }));
+  await installHook("claude-code", claude);
+  const c = JSON.parse(await readFile(claude, "utf8"));
+  assert.equal(c.model, "x");
+  assert.equal(c.hooks.PostToolUse[0].hooks[0].asyncRewake, true);
 });
