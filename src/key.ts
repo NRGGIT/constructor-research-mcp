@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { originOf } from "./config.js";
 
@@ -32,9 +33,44 @@ export async function readKeyFile(file: string): Promise<SavedKey | undefined> {
 /** Saves the key for one Constructor, mode 600, replacing the file in one step. */
 export async function saveKeyFile(file: string, url: string, key: string) {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   await writeFile(tmp, JSON.stringify({ url: originOf(url), key }) + "\n", {
     mode: 0o600,
+    flag: "wx",
   });
-  await rename(tmp, file);
+  try {
+    await rename(tmp, file);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
+}
+
+export type KeyCheck = "ok" | "rejected" | "no_api" | "unreachable";
+
+/** Ask Constructor whether it accepts the key: 200 accepted, 401 rejected, else no public API. */
+export async function checkKey(
+  url: string,
+  apiPath: string,
+  key: string,
+  timeoutMs = 15000,
+): Promise<{ result: KeyCheck; status?: number }> {
+  try {
+    const response = await fetch(`${url}${apiPath}/auth/session`, {
+      headers: {
+        "X-Research-AccessKey": `Bearer ${key}`,
+        Accept: "application/json",
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.body?.cancel();
+    const status = response.status;
+    return {
+      result: status === 200 ? "ok" : status === 401 ? "rejected" : "no_api",
+      status,
+    };
+  } catch {
+    return { result: "unreachable" };
+  }
 }

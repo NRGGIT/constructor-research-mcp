@@ -4,7 +4,7 @@
 // Usage: npx -y -p constructor-research-mcp constructor-research-set-key <Constructor link>
 import { configFromEnv, originOf } from "./config.js";
 import { cleanKey } from "./api.js";
-import { saveKeyFile } from "./key.js";
+import { checkKey, saveKeyFile } from "./key.js";
 
 const USAGE =
   "Usage: npx -y -p constructor-research-mcp constructor-research-set-key <Constructor link, e.g. https://acme.constructor.app>\nThen paste the access key (rk-…) when asked, or pipe it in on stdin.";
@@ -69,27 +69,16 @@ async function main() {
     return 1;
   }
   // Check the key with Constructor before saving it.
-  let status: number;
-  try {
-    const response = await fetch(`${url}${config.apiPath}/auth/session`, {
-      headers: {
-        "X-Research-AccessKey": `Bearer ${key}`,
-        Accept: "application/json",
-      },
-      redirect: "manual",
-      signal: AbortSignal.timeout(15000),
-    });
-    status = response.status;
-    await response.body?.cancel();
-  } catch {
+  const { result, status } = await checkKey(url, config.apiPath, key);
+  if (result === "unreachable") {
     console.error(`Could not reach ${url} (VPN?); nothing saved.`);
     return 1;
   }
-  if (status === 401) {
+  if (result === "rejected") {
     console.error(`${url} rejected this key; nothing saved.`);
     return 1;
   }
-  if (status !== 200) {
+  if (result !== "ok") {
     console.error(
       `${url} answered HTTP ${status}: it may not have the public API yet; nothing saved.`,
     );

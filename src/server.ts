@@ -536,9 +536,21 @@ async function main() {
   };
   await server.connect(new StdioServerTransport());
 }
-main().catch(() => {
-  console.error(
-    "Constructor Research MCP could not start. Check environment configuration.",
-  );
-  process.exitCode = 1;
-});
+// `constructor-research-mcp install` (or setup) runs the interactive setup instead of the server.
+if (["install", "setup"].includes(process.argv[2] ?? "")) {
+  import("./install.js")
+    .then(({ runInstall }) => runInstall(process.argv.slice(3)))
+    .then(
+      (code) => (process.exitCode = code),
+      (err) => {
+        console.error(`Setup failed: ${err?.message ?? err}`);
+        process.exitCode = 1;
+      },
+    );
+} else
+  main().catch(() => {
+    console.error(
+      "Constructor Research MCP could not start. Check environment configuration.",
+    );
+    process.exitCode = 1;
+  });

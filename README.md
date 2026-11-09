@@ -1,12 +1,24 @@
 # Constructor Research MCP
 
+> **0.5:** one command sets it up: `npx -y constructor-research-mcp@latest install` finds your coding agents, saves your access key and adds the MCP to each of them.
+>
 > **0.4:** works with Constructor's public API and a personal access key (`rk-…`); browser sign-in is gone. On a Constructor without the public API yet, pin the previous version: `constructor-research-mcp@0.3.3`.
 
-Local stdio MCP for Codex CLI, Claude Code and OpenCode. Submit the whole application once; the MCP builds images, connects services, configures them and starts them. The agent supplies missing configuration and reports the result.
+Local stdio MCP for Codex CLI, Claude Code, OpenCode, jcode, Cline, Cursor and Gemini CLI. Submit the whole application once; the MCP builds images, connects services, configures them and starts them. The agent supplies missing configuration and reports the result.
 
 ## Install
 
-You need Node.js 22+ and your personal access key (`rk-…`); the MCP does not work without it. Add the MCP with the key; the address is `https://constructor.app` unless your organisation has its own Constructor (e.g. `https://acme.constructor.app`).
+You need Node.js 22+ and your personal access key (`rk-…`); the MCP does not work without it. In a terminal, run:
+
+```sh
+npx -y constructor-research-mcp@latest install
+```
+
+It finds the coding agents on your machine (Claude Code, Codex, OpenCode, jcode, Cline, Cursor, Gemini CLI), asks which of them to set up and whether for this project or globally, and where you use Constructor Research (constructor.app or your organisation's instance). It then links to the page where you create an access key, takes the key hidden, checks it with Constructor and saves it to the key file below. Each agent gets an entry that runs `npx -y constructor-research-mcp@latest` and holds no key. Every settings file it changes is first copied to `<file>.constructor-backup`; `--verbose` shows the files and entries, `--dry-run` changes nothing, `--help` lists the options for scripted installs. Then restart the agents.
+
+### By hand
+
+Add the MCP with the key; the address is `https://constructor.app` unless your organisation has its own Constructor (e.g. `https://acme.constructor.app`).
 
 **Claude Code**
 

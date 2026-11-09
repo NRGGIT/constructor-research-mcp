@@ -1,6 +1,6 @@
 {
   "name": "constructor-research-mcp",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "description": "Local deployment MCP for Constructor Research",
   "license": "MIT",
@@ -48,7 +48,9 @@
     "set-key": "node dist/set-key.js"
   },
   "dependencies": {
+    "@clack/prompts": "1.8.1",
     "@modelcontextprotocol/sdk": "1.32.2",
+    "smol-toml": "1.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {

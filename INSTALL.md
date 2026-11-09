@@ -1,6 +1,6 @@
 # Install the Constructor Research MCP
 
-The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as acme.constructor.app. It runs on your machine as a local MCP server, installed from npm, and works with your personal Constructor access key.
+The MCP lets Claude Code, Codex, OpenCode, jcode, Cline, Cursor or Gemini CLI deploy apps to Constructor Research: constructor.app, or your organisation's Constructor, such as acme.constructor.app. It runs on your machine as a local MCP server, installed from npm, and works with your personal Constructor access key.
 
 ## What you need
 
@@ -8,7 +8,35 @@ The MCP lets Claude Code, Codex or OpenCode deploy apps to Constructor Research:
 - a personal access key (`rk-…`) for your Constructor
 - macOS, Windows or Linux
 
-## 1. Add it to your tool, with your key
+## The quick way: one command
+
+In a terminal (not inside an agent), run:
+
+```sh
+npx -y constructor-research-mcp@latest install
+```
+
+1. It lists the coding agents it found. Keep them, or choose **Customize…** to add or remove some.
+2. **Install location**: **Project** (this folder only) or **Global** (every project). Cline has only a global setting.
+3. **Where do you have access to Constructor Research?** constructor.app, or your organisation's separate instance (type its address, e.g. `acme.constructor.app`).
+4. It shows the link where you create an access key. Paste the key; it is not shown, it is checked with Constructor and saved to `~/.config/constructor-research/access-key.json` (readable only by you).
+5. Confirm, and it adds the MCP to each agent. The entry runs `npx -y constructor-research-mcp@latest` and contains no key. A settings file it changes is copied to `<file>.constructor-backup` the first time. An older `constructor-research` entry, for example one with the key in its settings, is replaced.
+
+Then restart the agents. Settings files with comments (JSONC) are left untouched; add the entry by hand as below.
+
+| Agent       | Global                                                                         | Project                 |
+| ----------- | ------------------------------------------------------------------------------ | ----------------------- |
+| Claude Code | `~/.claude.json` (through `claude mcp add-json` when the CLI works)            | `.mcp.json`             |
+| Codex       | `~/.codex/config.toml`                                                         | `.codex/config.toml`    |
+| OpenCode    | `~/.config/opencode/opencode.json` (1.x and 2.x layouts)                       | `opencode.json`         |
+| jcode       | `~/.jcode/mcp.json`                                                            | `.jcode/mcp.json`       |
+| Cline       | `~/.cline/data/settings/cline_mcp_settings.json` (VS Code 4.x, JetBrains, CLI) | none                    |
+| Cursor      | `~/.cursor/mcp.json`                                                           | `.cursor/mcp.json`      |
+| Gemini CLI  | `~/.gemini/settings.json`                                                      | `.gemini/settings.json` |
+
+For scripts: `install -y --agents=claude,codex --scope=global --constructor=https://acme.constructor.app --key-stdin` reads the key from stdin (or `CONSTRUCTOR_ACCESS_KEY`); the key is never accepted as an argument.
+
+## 1. By hand: add it to your tool, with your key
 
 The key is required: the MCP does nothing without it. The address is `https://constructor.app`; if your organisation has its own Constructor, use its address instead (e.g. `https://acme.constructor.app`). Replace `rk-your-key` with your key.
 
