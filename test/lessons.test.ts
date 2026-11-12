@@ -204,6 +204,9 @@ test("a public URL that does not answer names the services that printed nothing 
 test("a new update ends the unfinished deployment of the same application", async () => {
   const f = await platform();
   const mcp = new DeploymentRuntime(f.engine, 20);
+  // The first update keeps running in the background and may hold the state lock when
+  // the second arrives; wait for it as a real call does (the fixture's 0 s fails at once).
+  f.store.lockWaitMs = 3000;
   try {
     f.db.applications = [{ id: A, name: "app", services: [] }];
     const build = (name: string) => ({
