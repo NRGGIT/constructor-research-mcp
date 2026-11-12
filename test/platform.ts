@@ -205,6 +205,41 @@ export async function platform() {
       db.images.push(i);
       return send(db.badCreateReply ? {} : i);
     }
+    if (path === `/projects/${P}/images/external` && req.method === "POST") {
+      // An older Constructor has no such endpoint.
+      if (db.noExternal) return send({ detail: "Not Found" }, 404);
+      const ref = body.reference;
+      const refused = /^docker\.io\//.test(ref)
+        ? `Registry docker.io returned an unexpected manifest.`
+        : db.refuse?.[ref];
+      if (refused)
+        return send(
+          {
+            detail: {
+              msg: "Invalid parameters",
+              error_code: 10001,
+              info: { details: refused },
+            },
+          },
+          421,
+        );
+      if (typeof body.name !== "string" || body.name.length > 30)
+        return send({ detail: [{ type: "string_too_long" }] }, 422);
+      const i = {
+        id: `external${n++}`,
+        project_id: P,
+        desk_id: null,
+        desk_name: null,
+        name: body.name,
+        dockerfile: "",
+        source: "external",
+        reference: ref,
+        digest: "sha256:0123",
+        build_status: "done",
+      };
+      db.images.push(i);
+      return send(i);
+    }
     if (path === `/projects/${P}/images`) {
       const rows = db.images.filter(
         (i: any) =>

@@ -469,21 +469,59 @@ export class DeploymentEngine {
     return services.map((s) => {
       if (!s.image) return s;
       const want = s.image.trim();
+      const ref = shortReference(want);
+      const same = (im: any) =>
+        typeof im.reference === "string" &&
+        shortReference(im.reference) === ref;
       const hits = images.filter(
-        (im) => im.reference === want || im.name === want || im.id === want,
+        (im) =>
+          im.reference === want ||
+          same(im) ||
+          im.name === want ||
+          im.id === want,
       );
       const im =
         hits.length > 1
           ? (hits.find((x) => x.reference === want) ??
+            hits.find((x) => same(x) && DeploymentEngine.usable(x)) ??
             bad(
               `Image "${want}" for ${s.name} matches several images: ${hits.map((x) => x.id).join(", ")}. Pass image_id.`,
             ))
           : hits[0];
-      // Not in the project: the caller builds it from a one-line FROM Dockerfile.
+      // Not in the project: the caller registers it (registerExternal).
       if (!im) return s;
       const { image: _i, ...rest } = s;
       return { ...rest, image_id: im.id };
     });
+  }
+  /**
+   * Add a public registry image to the project as an external image: no desk, no
+   * build. Constructor reads the manifest at once and refuses a missing, private,
+   * non-amd64 or malformed image with its reason. Undefined when this Constructor
+   * has no such endpoint yet (the caller then builds it from FROM).
+   */
+  async registerExternal(project: string, service: string, reference: string) {
+    try {
+      return await this.api.request(
+        "POST",
+        this.root(project) + "/images/external",
+        { name: externalName(reference), reference },
+      );
+    } catch (err) {
+      if (!(err instanceof ToolError) || err.code !== "api_error") throw err;
+      if (err.status === 404 || err.status === 405) return undefined;
+      if ([400, 421, 422].includes(err.status ?? 0)) {
+        const why = cleanReason(err.reason);
+        throw new ToolError(
+          "image_refused",
+          `Service ${service}: Constructor refused image ${reference}${why ? `: ${why}` : ""}. Nothing was deployed. Only public images with a linux/amd64 variant can be used; check the name and tag (Docker Hub images as name:tag or user/name:tag). Tell the user, or use build with a Dockerfile instead.`,
+          err.status,
+          err.apiCode,
+          { stage: "register", service, image: reference },
+        );
+      }
+      throw err;
+    }
   }
   async listImages(raw: unknown) {
     const input = listInput.parse(raw);
@@ -1518,4 +1556,42 @@ export class DeploymentEngine {
     }
     return result;
   }
+}
+
+/**
+ * Docker Hub references in the short form Constructor accepts: docker.io/library/nginx:1.27
+ * is refused (HYP-3189), nginx:1.27 works. Other registries are left as given.
+ */
+export function shortReference(reference: string) {
+  const r = reference.trim();
+  const m =
+    /^(?:docker\.io|index\.docker\.io|registry-1\.docker\.io)\/(.+)$/i.exec(r);
+  return m ? m[1].replace(/^library\/(?=[^/]+$)/, "") : r;
+}
+/** True when the reference pins a tag or digest; without one it means latest, which moves. */
+export function hasTag(reference: string) {
+  return reference.includes("@") || reference.split("/").at(-1)!.includes(":");
+}
+/** Image name for a reference (Constructor allows 30 characters): repository and tag. */
+export function externalName(reference: string) {
+  const name = reference
+    .split("/")
+    .at(-1)!
+    .split("@")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .slice(0, 30)
+    .replace(/^-+|-+$/g, "");
+  return name || "image";
+}
+/** Constructor's refusal reason as one short line, never anything that looks like a key. */
+function cleanReason(reason?: string) {
+  if (!reason) return undefined;
+  const line = reason
+    .replace(/rk-[A-Za-z0-9_-]+/g, "rk-…")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300)
+    .replace(/[.\s]+$/, "");
+  return line || undefined;
 }

@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **0.6:** a registry `image` the project does not have is added to it as an external image, with no desk and no build; Constructor refuses a bad one at once, with its reason.
+>
 > **0.5:** one command sets it up: `npx -y constructor-research-mcp@latest install` finds your coding agents, saves your access key and adds the MCP to each of them.
 >
 > **0.4:** works with Constructor's public API and a personal access key (`rk-…`); browser sign-in is gone. On a Constructor without the public API yet, pin the previous version: `constructor-research-mcp@0.3.3`.
@@ -191,7 +193,7 @@ Private DNS works between containers; browser JavaScript needs a public backend 
 
 Replace a service's `build` with `"image_id":"IMAGE_ID"` to skip building, or with `"image":"registry/repo:tag"` to run a registry image unchanged, such as `jgraph/drawio:latest` from Docker Hub. Which of `build`, `image` and `image_id` fits is the agent's choice; the tool descriptions say what each one does. `list_images` returns compact records with `source` (`desk_build` or `external`), `reference` and `build_status` (`not_started`, `snapshot_creation`, `in_progress`, `done` or `error`); `detailed:true` returns full records.
 
-With `image`, the MCP first looks for it in the project (by `reference` or name). External images there (`source: external`) are pulled, not built, so they are used whatever their build status, unless it is `error`. An image the project does not have is built on the desk from a one-line `FROM <image>` Dockerfile that the MCP writes to `.constructor/images/<name>/`, because the public API cannot add an external image yet.
+With `image`, the MCP first looks for it in the project (by `reference` or name). External images there (`source: external`) are pulled, not built, so they are used whatever their build status, unless it is `error`. An image the project does not have is added to the project as an external image (`POST /projects/{id}/images/external`): no desk, no upload, no build. Constructor reads the image manifest at once and refuses a missing tag, a private image, an image without a `linux/amd64` variant or a malformed reference; the MCP then returns `image_refused` with Constructor's reason and creates nothing else. Docker Hub references are sent in the short form (`docker.io/library/nginx:1.27` becomes `nginx:1.27`), which Constructor requires for now. A reference without a tag means `latest`, which moves: the result then carries `image_warnings`. On a Constructor without this endpoint, the MCP falls back to building the image on the desk from a one-line `FROM <image>` Dockerfile in `.constructor/images/<name>/`.
 
 - Build storage is omitted by default, using the API's documented **50 GB** default. Explicit `ephemeral_build_disk_size_gb` overrides must be **10–1000 GB**.
 - Each service can have multiple ports (1–65535), with at most **one public port**. That port must match where the container listens.

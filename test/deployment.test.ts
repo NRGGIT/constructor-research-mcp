@@ -1003,3 +1003,29 @@ test("a project with deployment off that the key may not switch on stops with wh
     await f.close();
   }
 });
+
+test("registry references: Docker Hub short form, tag check, image name", async () => {
+  const { shortReference, hasTag, externalName } =
+    await import("../src/deployment.js");
+  assert.equal(shortReference("docker.io/library/nginx:1.27"), "nginx:1.27");
+  assert.equal(
+    shortReference("docker.io/jgraph/drawio:24"),
+    "jgraph/drawio:24",
+  );
+  assert.equal(shortReference("index.docker.io/library/redis"), "redis");
+  assert.equal(
+    shortReference("docker.io/library/team/app:1"),
+    "library/team/app:1",
+  );
+  assert.equal(shortReference("ghcr.io/org/app:1.2"), "ghcr.io/org/app:1.2");
+  assert.equal(hasTag("nginx:1.27"), true);
+  assert.equal(hasTag("ghcr.io/org/app@sha256:abc"), true);
+  assert.equal(hasTag("localhost:5000/app"), false);
+  assert.equal(hasTag("nginx"), false);
+  assert.equal(
+    externalName("ghcr.io/stefanprodan/podinfo:6.7.0"),
+    "podinfo-6-7-0",
+  );
+  assert.equal(externalName("ghcr.io/org/app@sha256:abc"), "app");
+  assert.ok(externalName("a/" + "x".repeat(60) + ":1").length <= 30);
+});

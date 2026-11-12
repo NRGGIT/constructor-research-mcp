@@ -170,7 +170,7 @@ export const serviceInput = z
       )
       .optional()
       .describe(
-        "A registry image reference (docker.io/jgraph/drawio:latest, ghcr.io/org/app:1.2) or the name of an image already in the project; the alternative to build and image_id. If the project has it (an external image added in Constructor, or an earlier build), it is used as is. Otherwise the MCP builds it on the desk from a one-line FROM <image> Dockerfile, so the image runs unchanged; to add files or change it, use build with your own Dockerfile. The service's ports must match the port the image listens on.",
+        "A public registry image reference (jgraph/drawio:24.7.17, ghcr.io/org/app:1.2) or the name of an image already in the project; the alternative to build and image_id. If the project has it, it is used as is. Otherwise the MCP adds it to the project as an external image: no desk and no build, it runs unchanged. Constructor checks it at once (public, linux/amd64, tag exists) and a refusal comes back as image_refused with the reason; then tell the user. Prefer a fixed tag over latest. To add files or change it, use build with your own Dockerfile. The service's ports must match the port the image listens on.",
       ),
     build: build.optional(),
     hardware: z

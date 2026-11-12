@@ -13,6 +13,8 @@ export class ToolError extends Error {
   ) {
     super(message);
   }
+  /** Constructor's own reason (detail.info.details); never put into messages by default. */
+  reason?: string;
 }
 export const segment = (s: string) => encodeURIComponent(s);
 /** A key as Constructor shows it, with or without the "Bearer " the header adds. */
@@ -233,19 +235,25 @@ export class PlatformApi {
           response.status,
         );
       let apiCode: number | undefined;
+      let reason: string | undefined;
       try {
         const d = (await response.json()) as any;
-        if (typeof d?.details?.error_code === "number")
-          apiCode = d.details.error_code;
+        // Constructor answers {"detail": {...}}; older specs show {"details": {...}}.
+        const body = d?.detail ?? d?.details;
+        if (typeof body?.error_code === "number") apiCode = body.error_code;
+        if (typeof body?.info?.details === "string") reason = body.info.details;
       } catch {
         /* Error bodies can contain secrets; never echo them. */
       }
-      throw new ToolError(
+      const err = new ToolError(
         "api_error",
         `Constructor API returned HTTP ${response.status}${apiCode ? ` (error ${apiCode})` : ""}.`,
         response.status,
         apiCode,
       );
+      // Kept off the message: only callers that know the reason is safe to show use it.
+      err.reason = reason;
+      throw err;
     }
     if (response.status === 204) return undefined as T;
     try {

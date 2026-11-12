@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { configFromEnv, VERSION } from "./config.js";
 import { PlatformApi, ToolError } from "./api.js";
 import { StateStore } from "./store.js";
-import { DeploymentEngine } from "./deployment.js";
+import { DeploymentEngine, hasTag, shortReference } from "./deployment.js";
 import { DeploymentRuntime } from "./runtime.js";
 import { FileManager, dockerignore, type BuildSource } from "./files.js";
 import { basename, join } from "node:path";
@@ -60,182 +60,218 @@ async function main() {
   const checked =
     (fn: (a: any) => Promise<any>, single = false) =>
     async (a: any) => {
-      const begun = Date.now();
-      if (!single && a.project_id && a.services) {
-        // Images the project has by reference or name; builds without a desk go to the project's desk.
-        let services = await engine.resolveImages(a.project_id, a.services);
-        if (
-          services.some((x: any) => x.image || (x.build && !x.build.desk_id))
-        ) {
-          const here = config.localDesk;
-          const desk =
-            here && a.project_id === here.projectId
-              ? here.deskId
-              : await engine.deskFor(
-                  a.project_id,
-                  `${a.application_name ?? "application"}-source`,
-                );
-          services = await Promise.all(
-            services.map(async (x: any) => {
-              if (x.build && !x.build.desk_id)
-                return { ...x, build: { ...x.build, desk_id: desk } };
-              if (!x.image) return x;
-              // A registry image the project does not have: build it from a one-line Dockerfile.
-              if (!/^[a-z0-9][a-z0-9._/:@-]*$/i.test(x.image))
-                throw new ToolError(
-                  "invalid_input",
-                  `Service ${x.name}: invalid image reference.`,
-                );
-              const slug = x.image
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-|-$/g, "")
-                .slice(0, 80);
-              const remote = `.constructor/images/${slug}`;
-              const dir =
-                here && desk === here.deskId
-                  ? join(here.root, remote)
-                  : join(tmpdir(), "constructor-research-images", slug);
-              await mkdir(dir, { recursive: true });
-              await writeFile(join(dir, "Dockerfile"), `FROM ${x.image}\n`);
-              const { image: _i, ...rest } = x;
-              return {
-                ...rest,
-                build: { desk_id: desk, local_path: dir, remote_path: remote },
-              };
-            }),
-          );
-        }
-        a = { ...a, services };
-      }
-      if (!single && a.services?.some((x: any) => x.build?.local_path)) {
-        // Upload local sources first, once per (disk, local folder, disk folder).
-        const done = new Set<string>();
-        const services = [];
-        for (const x of a.services) {
-          const b = x.build;
-          if (!b?.local_path) {
-            services.push(x);
-            continue;
-          }
-          // Inside the desk the MCP runs in, its project folder is the disk: nothing to upload.
-          const here = config.localDesk;
-          if (here && b.desk_id === here.deskId) {
-            const at = diskPath(here, b.local_path);
-            if (!at)
-              throw new ToolError(
-                "invalid_input",
-                `Service ${x.name}: local_path ${b.local_path} is outside this desk's project folder ${here.root}, which is the desk's disk. Move the sources into ${here.root}, then call again.`,
-              );
-            const { local_path: _l, remote_path: _r, ...rest } = b;
-            services.push({
-              ...x,
-              build: {
-                ...rest,
-                dockerfile:
-                  "/" +
-                  [
-                    ...at.split("/"),
-                    ...(b.dockerfile ?? "Dockerfile").split("/"),
-                  ]
-                    .filter(Boolean)
-                    .join("/"),
-              },
-            });
-            continue;
-          }
-          if (!b.desk_id || !a.project_id)
-            throw new ToolError(
-              "invalid_input",
-              `Service ${x.name}: local_path needs a disk. Pass desk_url (the desk link from the user) or build.desk_id with project_id.`,
-            );
-          const remote = (b.remote_path ?? basename(b.local_path))
-            .split("/")
-            .filter(Boolean)
-            .join("/");
-          const key = JSON.stringify([b.desk_id, b.local_path, remote]);
-          if (!done.has(key)) {
-            const r = await files.sync({
-              project_id: a.project_id,
-              desk_id: b.desk_id,
-              local_path: b.local_path,
-              remote_path: remote,
-              exclude: await dockerignore(b.local_path),
-              confirm: a.confirm,
-            });
-            if (r.status !== "synced")
-              return {
-                ...r,
-                message: `${r.message} Nothing was built yet. ${
-                  r.status === "confirm_required"
-                    ? "After the user approves, repeat the same call with confirm=true."
-                    : r.status === "in_progress"
-                      ? "Repeat the same call to continue uploading."
-                      : "Resolve the listed files, then repeat the call."
-                }`,
-              };
-            done.add(key);
-          }
-          const inside = (b.dockerfile ?? "Dockerfile")
-            .split("/")
-            .filter(Boolean);
-          services.push({
-            ...x,
-            build: {
-              ...b,
-              remote_path: remote,
-              dockerfile:
-                "/" +
-                [...remote.split("/").filter(Boolean), ...inside].join("/"),
-            },
-          });
-        }
-        a = {
-          ...a,
-          services,
-          wait_seconds: Math.min(
-            a.wait_seconds ?? 20,
-            Math.max(0, Math.floor(35 - (Date.now() - begun) / 1000)),
-          ),
-        };
-      }
-      const sources: BuildSource[] = single
-        ? [
-            {
-              service: a.name,
-              desk_id: a.desk_id,
-              dockerfile: a.dockerfile,
-              ports: [],
-            },
-          ]
-        : (a.services ?? [])
-            .filter((x: any) => x.build?.desk_id)
-            .map((x: any) => ({
-              service: x.name,
-              desk_id: x.build.desk_id,
-              dockerfile: x.build.dockerfile,
-              ports: (x.ports ?? []).map((p: any) => p.number),
-            }));
-      if (!sources.length || !a.project_id) return fn(a);
-      const pre = await files.preflight(a.project_id, sources);
-      if (pre.missing.length)
-        throw new ToolError(
-          "dockerfile_missing",
-          `Dockerfile not found on the disk for ${pre.missing.join(", ")}. Upload the source with sync_files (check the path), then call again. Nothing was built.`,
-        );
-      const allOnDisk =
-        !single &&
-        (a.services ?? []).every((x: any) => !x.build || x.build.desk_id);
-      const result = await fn(allOnDisk ? { ...a, files_uploaded: true } : a);
-      return pre.warnings.length
+      const notes: string[] = [];
+      const result = await prepared(fn, single, a, notes);
+      return notes.length
         ? {
             ...result,
-            message:
-              `${result.message ?? ""} Dockerfile warnings to fix or tell the user about: ${pre.warnings.join(" ")}`.trim(),
-            dockerfile_warnings: pre.warnings,
+            message: `${result.message ?? ""} ${notes.join(" ")}`.trim(),
+            image_warnings: notes,
           }
         : result;
     };
+  const prepared = async (
+    fn: (a: any) => Promise<any>,
+    single: boolean,
+    a: any,
+    notes: string[],
+  ) => {
+    const begun = Date.now();
+    if (!single && a.project_id && a.services) {
+      // Images the project has (by reference or name) are used as they are. Any other
+      // registry image is added to the project as an external image: no desk, no build.
+      const added = new Map<string, any>();
+      let services: any[] = [];
+      for (const x of await engine.resolveImages(a.project_id, a.services)) {
+        if (!x.image) {
+          services.push(x);
+          continue;
+        }
+        if (!/^[a-z0-9][a-z0-9._/:@-]*$/i.test(x.image))
+          throw new ToolError(
+            "invalid_input",
+            `Service ${x.name}: invalid image reference.`,
+          );
+        const ref = shortReference(x.image);
+        let im = added.get(ref);
+        if (!im) {
+          im = await engine.registerExternal(a.project_id, x.name, ref);
+          // This Constructor cannot add external images: build it from FROM below.
+          if (!im?.id) {
+            services.push(x);
+            continue;
+          }
+          added.set(ref, im);
+          if (!hasTag(ref))
+            notes.push(
+              `Image ${ref} (${x.name}) has no tag, so it means latest, which moves; Constructor keeps the version it found now (${im.digest ?? "digest not shown"}). Suggest a tag to the user.`,
+            );
+        }
+        const { image: _i, ...rest } = x;
+        services.push({ ...rest, image_id: im.id });
+      }
+      // Builds without a desk go to the project's desk.
+      if (services.some((x: any) => x.image || (x.build && !x.build.desk_id))) {
+        const here = config.localDesk;
+        const desk =
+          here && a.project_id === here.projectId
+            ? here.deskId
+            : await engine.deskFor(
+                a.project_id,
+                `${a.application_name ?? "application"}-source`,
+              );
+        services = await Promise.all(
+          services.map(async (x: any) => {
+            if (x.build && !x.build.desk_id)
+              return { ...x, build: { ...x.build, desk_id: desk } };
+            if (!x.image) return x;
+            // A Constructor without external images: build it from a one-line Dockerfile.
+            const slug = x.image
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 80);
+            const remote = `.constructor/images/${slug}`;
+            const dir =
+              here && desk === here.deskId
+                ? join(here.root, remote)
+                : join(tmpdir(), "constructor-research-images", slug);
+            await mkdir(dir, { recursive: true });
+            await writeFile(join(dir, "Dockerfile"), `FROM ${x.image}\n`);
+            const { image: _i, ...rest } = x;
+            return {
+              ...rest,
+              build: { desk_id: desk, local_path: dir, remote_path: remote },
+            };
+          }),
+        );
+      }
+      a = { ...a, services };
+    }
+    if (!single && a.services?.some((x: any) => x.build?.local_path)) {
+      // Upload local sources first, once per (disk, local folder, disk folder).
+      const done = new Set<string>();
+      const services = [];
+      for (const x of a.services) {
+        const b = x.build;
+        if (!b?.local_path) {
+          services.push(x);
+          continue;
+        }
+        // Inside the desk the MCP runs in, its project folder is the disk: nothing to upload.
+        const here = config.localDesk;
+        if (here && b.desk_id === here.deskId) {
+          const at = diskPath(here, b.local_path);
+          if (!at)
+            throw new ToolError(
+              "invalid_input",
+              `Service ${x.name}: local_path ${b.local_path} is outside this desk's project folder ${here.root}, which is the desk's disk. Move the sources into ${here.root}, then call again.`,
+            );
+          const { local_path: _l, remote_path: _r, ...rest } = b;
+          services.push({
+            ...x,
+            build: {
+              ...rest,
+              dockerfile:
+                "/" +
+                [...at.split("/"), ...(b.dockerfile ?? "Dockerfile").split("/")]
+                  .filter(Boolean)
+                  .join("/"),
+            },
+          });
+          continue;
+        }
+        if (!b.desk_id || !a.project_id)
+          throw new ToolError(
+            "invalid_input",
+            `Service ${x.name}: local_path needs a disk. Pass desk_url (the desk link from the user) or build.desk_id with project_id.`,
+          );
+        const remote = (b.remote_path ?? basename(b.local_path))
+          .split("/")
+          .filter(Boolean)
+          .join("/");
+        const key = JSON.stringify([b.desk_id, b.local_path, remote]);
+        if (!done.has(key)) {
+          const r = await files.sync({
+            project_id: a.project_id,
+            desk_id: b.desk_id,
+            local_path: b.local_path,
+            remote_path: remote,
+            exclude: await dockerignore(b.local_path),
+            confirm: a.confirm,
+          });
+          if (r.status !== "synced")
+            return {
+              ...r,
+              message: `${r.message} Nothing was built yet. ${
+                r.status === "confirm_required"
+                  ? "After the user approves, repeat the same call with confirm=true."
+                  : r.status === "in_progress"
+                    ? "Repeat the same call to continue uploading."
+                    : "Resolve the listed files, then repeat the call."
+              }`,
+            };
+          done.add(key);
+        }
+        const inside = (b.dockerfile ?? "Dockerfile")
+          .split("/")
+          .filter(Boolean);
+        services.push({
+          ...x,
+          build: {
+            ...b,
+            remote_path: remote,
+            dockerfile:
+              "/" + [...remote.split("/").filter(Boolean), ...inside].join("/"),
+          },
+        });
+      }
+      a = {
+        ...a,
+        services,
+        wait_seconds: Math.min(
+          a.wait_seconds ?? 20,
+          Math.max(0, Math.floor(35 - (Date.now() - begun) / 1000)),
+        ),
+      };
+    }
+    const sources: BuildSource[] = single
+      ? [
+          {
+            service: a.name,
+            desk_id: a.desk_id,
+            dockerfile: a.dockerfile,
+            ports: [],
+          },
+        ]
+      : (a.services ?? [])
+          .filter((x: any) => x.build?.desk_id)
+          .map((x: any) => ({
+            service: x.name,
+            desk_id: x.build.desk_id,
+            dockerfile: x.build.dockerfile,
+            ports: (x.ports ?? []).map((p: any) => p.number),
+          }));
+    if (!sources.length || !a.project_id) return fn(a);
+    const pre = await files.preflight(a.project_id, sources);
+    if (pre.missing.length)
+      throw new ToolError(
+        "dockerfile_missing",
+        `Dockerfile not found on the disk for ${pre.missing.join(", ")}. Upload the source with sync_files (check the path), then call again. Nothing was built.`,
+      );
+    const allOnDisk =
+      !single &&
+      (a.services ?? []).every((x: any) => !x.build || x.build.desk_id);
+    const result = await fn(allOnDisk ? { ...a, files_uploaded: true } : a);
+    return pre.warnings.length
+      ? {
+          ...result,
+          message:
+            `${result.message ?? ""} Dockerfile warnings to fix or tell the user about: ${pre.warnings.join(" ")}`.trim(),
+          dockerfile_warnings: pre.warnings,
+        }
+      : result;
+  };
   /** Inside a desk, the agent edits its files in place instead of asking for a desk link. */
   const withDesk = (text: string) =>
     config.localDesk
@@ -248,7 +284,7 @@ async function main() {
     { name: "constructor-research", version: VERSION },
     {
       instructions: withDesk(
-        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project yourself; if the user has not said where to deploy or where files live, ask. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. A service can also take image: a registry reference (repo:tag) that runs unchanged. The MCP uses the copy in the project when there is one (list_images shows source and reference), otherwise builds it from FROM <image>. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, run the wait command that next_action names (with a shell), or call get_deployment(wait_seconds=45) again until it is finished; never perform the deployment steps yourself. Never end the turn while a deployment the user asked for is still running. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project yourself; if the user has not said where to deploy or where files live, ask. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. A service can also take image: a public registry reference (repo:tag) that runs unchanged. The MCP uses the copy in the project when there is one (list_images shows source and reference), otherwise adds it to the project as an external image, with no desk and no build; if Constructor refuses it (image_refused), tell the user the reason. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, run the wait command that next_action names (with a shell), or call get_deployment(wait_seconds=45) again until it is finished; never perform the deployment steps yourself. Never end the turn while a deployment the user asked for is still running. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
       ),
     },
   );
