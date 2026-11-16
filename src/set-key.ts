@@ -4,7 +4,15 @@
 // Usage: npx -y -p constructor-research-mcp constructor-research-set-key <Constructor link>
 import { configFromEnv, originOf } from "./config.js";
 import { cleanKey } from "./api.js";
-import { checkKey, saveKeyFile } from "./key.js";
+import { routeKey, saveKeyFile, type KeyCheck } from "./key.js";
+
+/** What an address answered about the key, for messages. */
+const said = (r?: KeyCheck) =>
+  r === "rejected"
+    ? "rejected this key"
+    : r === "unreachable"
+      ? "could not be reached (VPN?)"
+      : "answered without the public API";
 
 const USAGE =
   "Usage: npx -y -p constructor-research-mcp constructor-research-set-key <Constructor link, e.g. https://acme.constructor.app>\nThen paste the access key (rk-…) when asked, or pipe it in on stdin.";
@@ -68,26 +76,26 @@ async function main() {
     console.error("That is not an access key; nothing saved.");
     return 1;
   }
-  // Check the key with Constructor before saving it.
-  const { result, status } = await checkKey(url, config.apiPath, key);
-  if (result === "unreachable") {
-    console.error(`Could not reach ${url} (VPN?); nothing saved.`);
-    return 1;
-  }
-  if (result === "rejected") {
-    console.error(`${url} rejected this key; nothing saved.`);
-    return 1;
-  }
-  if (result !== "ok") {
-    console.error(
-      `${url} answered HTTP ${status}: it may not have the public API yet; nothing saved.`,
-    );
+  // Check the key with Constructor before saving it; inside a desk, with its server too.
+  const server = config.localDesk?.server;
+  const route = await routeKey(url, server, config.apiPath, key, {
+    checkHome: true,
+  });
+  if (route.result !== "ok") {
+    const also = route.server
+      ? `; this desk's server ${server} ${said(route.server)}`
+      : "";
+    console.error(`${url} ${said(route.home)}${also}; nothing saved.`);
     return 1;
   }
   await saveKeyFile(config.keyFile, url, key);
   console.log(
     `Key for ${url} saved to ${config.keyFile}. The MCP uses it from the next call; no restart needed.`,
   );
+  if (route.origin !== url)
+    console.log(
+      `This desk's server ${route.origin} accepts it${route.home === "ok" ? " too" : ` (${url} ${said(route.home)})`}: requests from this desk go there.`,
+    );
   return 0;
 }
 main().then(

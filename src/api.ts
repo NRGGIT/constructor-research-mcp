@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DEFAULT_BASE_URL, VERSION, type Config } from "./config.js";
-import { readKeyFile } from "./key.js";
+import { readKeyFile, routeKey } from "./key.js";
 export class ToolError extends Error {
   constructor(
     public code: string,
@@ -44,9 +45,41 @@ export class PlatformApi {
   async refresh() {
     if (this.config.baseUrlFixed || this.config.accessKey) return;
     const saved = await readKeyFile(this.config.keyFile).catch(() => undefined);
-    this.config.baseUrl = saved?.url ?? DEFAULT_BASE_URL;
+    this.config.baseUrl =
+      saved?.url ?? this.config.localDesk?.server ?? DEFAULT_BASE_URL;
   }
-  /** The access-key header for a request. */
+  /** Where requests went for the last key and pair of addresses; see origin(). */
+  private route?: { tag: string; until: number; origin: Promise<string> };
+  /**
+   * Where requests with this key go. Outside a desk, or when the desk's server is the user's
+   * Constructor, that is the user's Constructor. Inside a desk whose server (ROLOS_API_SERVER)
+   * differs, the server is asked once whether it accepts the key: if so, requests go there,
+   * else to the user's Constructor (routeKey). The answer holds until the key or an address
+   * changes; an unreachable server is asked again after a minute.
+   */
+  async origin(key: string): Promise<string> {
+    const home = this.config.baseUrl;
+    const server = this.config.localDesk?.server;
+    if (!server || server === home) return home;
+    const tag = createHash("sha256")
+      .update(`${home}\n${server}\n${key}`)
+      .digest("hex");
+    if (this.route?.tag === tag && Date.now() < this.route.until)
+      return this.route.origin;
+    const route = {
+      tag,
+      until: Infinity,
+      origin: routeKey(home, server, this.config.apiPath, key, {
+        timeoutMs: Math.min(5000, this.config.requestTimeoutMs),
+      }).then((r) => {
+        if (r.server === "unreachable") route.until = Date.now() + 60000;
+        return r.origin;
+      }),
+    };
+    this.route = route;
+    return route.origin;
+  }
+  /** The access-key header for a request, and the origin the request goes to. */
   private async auth() {
     let key = this.config.accessKey;
     if (key === undefined) {
@@ -78,7 +111,10 @@ export class PlatformApi {
         "needs_key",
         this.keyHelp("The access key is not in a valid format."),
       );
-    return { "X-Research-AccessKey": `Bearer ${clean}` };
+    return {
+      headers: { "X-Research-AccessKey": `Bearer ${clean}` },
+      origin: await this.origin(clean),
+    };
   }
   private rejected() {
     return new ToolError(
@@ -100,7 +136,7 @@ export class PlatformApi {
     path: string,
     init: { body?: BodyInit; headers?: Record<string, string> } = {},
   ) {
-    const auth = await this.auth();
+    const { headers: auth, origin } = await this.auth();
     const retries = ["MOVE", "DELETE"].includes(method)
       ? []
       : this.storageRetryMs;
@@ -115,18 +151,15 @@ export class PlatformApi {
       const again = wait !== undefined && wait < remaining - 1000;
       let response: Response;
       try {
-        response = await fetch(
-          this.config.baseUrl + this.davRoot(desk) + path,
-          {
-            method,
-            headers: { ...auth, ...init.headers },
-            body: init.body,
-            redirect: "manual",
-            signal: AbortSignal.timeout(
-              Math.max(1, Math.floor(Math.min(60000, remaining))),
-            ),
-          },
-        );
+        response = await fetch(origin + this.davRoot(desk) + path, {
+          method,
+          headers: { ...auth, ...init.headers },
+          body: init.body,
+          redirect: "manual",
+          signal: AbortSignal.timeout(
+            Math.max(1, Math.floor(Math.min(60000, remaining))),
+          ),
+        });
       } catch {
         if (again) {
           await delay(wait);
@@ -154,13 +187,11 @@ export class PlatformApi {
    * body and aborts through `signal`. 401 becomes needs_key; other statuses are returned.
    */
   async stream(path: string, signal: AbortSignal) {
-    const auth = await this.auth();
+    const { headers: auth, origin } = await this.auth();
     let response: Response;
     try {
       response = await fetch(
-        this.config.baseUrl +
-          (this.config.keeperPath ?? "/api/platform-keeper") +
-          path,
+        origin + (this.config.keeperPath ?? "/api/platform-keeper") + path,
         {
           headers: { ...auth, Accept: "text/event-stream" },
           redirect: "manual",
@@ -190,7 +221,7 @@ export class PlatformApi {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const auth = await this.auth();
+    const { headers: auth, origin } = await this.auth();
     const remaining = (this.deadline.getStore() ?? Infinity) - Date.now();
     if (remaining <= 0)
       throw new ToolError(
@@ -199,7 +230,7 @@ export class PlatformApi {
       );
     let response: Response;
     try {
-      response = await fetch(this.config.baseUrl + this.config.apiPath + path, {
+      response = await fetch(origin + this.config.apiPath + path, {
         method,
         headers: {
           ...auth,

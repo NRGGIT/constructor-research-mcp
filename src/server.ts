@@ -328,7 +328,8 @@ async function main() {
                         desk_url: `${config.baseUrl}/research/projects/${here.projectId}/desks/${here.deskId}`,
                       }
                     : args,
-                  config.baseUrl,
+                  // Links from the desk's own server work too.
+                  [config.baseUrl, config.localDesk?.server ?? []].flat(),
                   scope,
                   config.baseUrlFixed,
                 )

@@ -74,3 +74,42 @@ export async function checkKey(
     return { result: "unreachable" };
   }
 }
+
+/**
+ * Inside a Constructor desk two addresses can lead to the user's Constructor: the one the user
+ * named (the key's: links, key help and the key file keep it) and the server the desk names
+ * (ROLOS_API_SERVER), which may differ, e.g. https://constructor.app in a desk the user opened on
+ * https://acme.constructor.app. Requests go to the desk's server when it accepts the key, else to
+ * the user's address. The desk's server is the Constructor the desk runs on, so asking it about
+ * the key sends the key nowhere new.
+ */
+export interface KeyRoute {
+  /** Where requests with this key go. */
+  origin: string;
+  /** "ok" when an address accepted the key, else the user's address's answer; undefined when nothing was asked. */
+  result?: KeyCheck;
+  /** The user's address's answer; only when asked for (setup). */
+  home?: KeyCheck;
+  /** The desk server's answer; only inside a desk whose server differs from the user's address. */
+  server?: KeyCheck;
+}
+export async function routeKey(
+  home: string,
+  server: string | undefined,
+  apiPath: string,
+  key: string,
+  { checkHome = false, timeoutMs = 15000 } = {},
+): Promise<KeyRoute> {
+  const other = server && server !== home ? server : undefined;
+  const [h, s] = await Promise.all([
+    checkHome ? checkKey(home, apiPath, key, timeoutMs) : undefined,
+    other ? checkKey(other, apiPath, key, timeoutMs) : undefined,
+  ]);
+  const accepted = h?.result === "ok" || s?.result === "ok";
+  return {
+    origin: s?.result === "ok" ? other! : home,
+    result: accepted ? "ok" : (h ?? s)?.result,
+    home: h?.result,
+    server: s?.result,
+  };
+}

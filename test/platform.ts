@@ -31,6 +31,7 @@ export async function platform() {
     /** The key accepted; every request's X-Research-AccessKey header is recorded. */
     key: KEY,
     keys: [] as string[],
+    hosts: [] as string[],
     buildStatus: "in_progress",
     errorPath: undefined,
     /** Disk D's project folder: path -> contents; folders hold null. */
@@ -78,6 +79,8 @@ export async function platform() {
     // Like the gateway: every route takes only the access key.
     const sent = req.headers["x-research-accesskey"];
     db.keys.push(String(sent ?? ""));
+    /** The address each request was sent to (127.0.0.1 or localhost: two origins, one server). */
+    db.hosts.push(String(req.headers.host ?? "").split(":")[0]);
     if (req.headers.cookie || !db.auth || sent !== `Bearer ${db.key}`) {
       res.writeHead(401, { "content-type": "application/json" });
       return res.end('{"code":"Unauthorized","message":"SECRET"}');

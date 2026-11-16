@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **0.6.1:** inside a Constructor desk, a key saved for your Constructor works even when the desk names another address for it (`ROLOS_API_SERVER`, e.g. `constructor.app` in a desk opened on `acme.constructor.app`).
+>
 > **0.6:** a registry `image` the project does not have is added to it as an external image, with no desk and no build; Constructor refuses a bad one at once, with its reason.
 >
 > **0.5:** one command sets it up: `npx -y constructor-research-mcp@latest install` finds your coding agents, saves your access key and adds the MCP to each of them.
@@ -83,7 +85,7 @@ When the MCP runs in VS Code inside a Constructor Research desk, it finds that d
 - the desk's project folder (`~/project`, or `CONSTRUCTOR_DESK_ROOT`) is its disk, so the agent creates and changes files there directly; nothing is uploaded, and `sync_files`, `list_files`, `create_folder`, `move_path` and `delete_path` answer `local_desk` for this desk;
 - `build_image`, `deploy_app`, `update_app`, `start_app`, `stop_app` and `list_images` act on this desk and project without a desk link; a `desk_url` or other IDs still name another desk;
 - `build.dockerfile` is the path inside the project folder (`/backend/Dockerfile`), or `build.local_path` names a folder inside it; Dockerfiles are checked from the local files;
-- the MCP works with the desk's Constructor (`ROLOS_API_SERVER`) unless `CONSTRUCTOR_BASE_URL` is set.
+- two addresses can lead to the user's Constructor: the one the user named (the saved key's, or `CONSTRUCTOR_BASE_URL`; without either, the desk's server) and the desk's server (`ROLOS_API_SERVER`), which may differ from it, e.g. `https://constructor.app` in a desk opened on `https://acme.constructor.app`. The MCP asks the desk's server once whether it accepts the key: if it does, requests go there, else to the user's address. Links shown to the user and key help keep the user's address, and desk links from either address are accepted. Setup (`install`, `constructor-research-set-key`) checks the key with both and saves it for the user's address when either accepts it.
 
 `CONSTRUCTOR_LOCAL_DESK=0` turns this off.
 
@@ -114,7 +116,7 @@ The agent does not choose a project or desk. It asks the user for the desk link:
 https://constructor.app/research/projects/<project_id>/desks/<desk_id>/viewer/file
 ```
 
-Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the Constructor the key belongs to; a link from another one returns `wrong_environment` (see the access key above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
+Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the Constructor the key belongs to (inside a desk, the desk's server too); a link from another one returns `wrong_environment` (see the access key above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
 
 Given only `project_id`, the MCP finds the desk itself:
 

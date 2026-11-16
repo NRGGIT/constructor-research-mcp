@@ -35,6 +35,31 @@ test("desk links yield project and desk IDs whatever follows the desk", () => {
   );
 });
 
+test("inside a desk, links from its server are accepted next to the user's Constructor", () => {
+  const server = "https://constructor.app";
+  const fromServer = link.replace(base, server);
+  assert.equal(
+    parseDeskUrl(fromServer, [base, server]).desk_id,
+    "fef21248839c46188eb75dad0b5a375e",
+  );
+  assert.equal(
+    parseDeskUrl(link, [base, server]).desk_id,
+    "fef21248839c46188eb75dad0b5a375e",
+  );
+  // The user's Constructor stays the one named when a link comes from elsewhere.
+  assert.throws(
+    () =>
+      parseDeskUrl(link.replace(base, "https://other.constructor.app"), [
+        base,
+        server,
+      ]),
+    (e: any) =>
+      e.code === "wrong_environment" &&
+      e.message.includes(`key is for ${base}`),
+  );
+  assert.throws(() => parseDeskUrl(fromServer, base), /wrong|link is for/);
+});
+
 test("links from another Constructor or without a desk are rejected", () => {
   const other = link.replace(base, "https://constructor.app");
   assert.throws(

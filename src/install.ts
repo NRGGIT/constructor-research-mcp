@@ -22,7 +22,7 @@ import {
 } from "./agents.js";
 import { cleanKey } from "./api.js";
 import { DEFAULT_BASE_URL, configFromEnv, originOf } from "./config.js";
-import { checkKey, readKeyFile, saveKeyFile, type SavedKey } from "./key.js";
+import { readKeyFile, routeKey, saveKeyFile, type SavedKey } from "./key.js";
 
 const bold = (s: string) => styleText("bold", s);
 const dim = (s: string) => styleText("dim", s);
@@ -286,12 +286,16 @@ export async function runInstall(argv: string[]): Promise<number> {
     saved = undefined; // A broken key file is replaced by the new key.
   }
   let base: string;
+  /** Inside a Constructor desk, the server it names; the key is checked there too. */
+  const deskServer = config.localDesk?.server;
   try {
     const given = value("--constructor");
     if (given) base = linkOrigin(given);
-    else if (yes) base = saved?.url ?? DEFAULT_BASE_URL;
+    else if (yes) base = saved?.url ?? deskServer ?? DEFAULT_BASE_URL;
     else {
-      const savedOrg = saved && saved.url !== DEFAULT_BASE_URL ? saved.url : "";
+      // Inside a desk its server is the likely answer, but the user may open another address.
+      const known = saved?.url ?? deskServer;
+      const savedOrg = known && known !== DEFAULT_BASE_URL ? known : "";
       const where = await ask(
         p.select({
           message: `Where do you have access to ${bold("Constructor Research")}?`,
@@ -351,20 +355,39 @@ export async function runInstall(argv: string[]): Promise<number> {
   // ---- 4. the access key ---------------------------------------------------------------------
   let keySaved = false;
   let keyProblem = "";
+  const short = (u: string) => u.replace(/^https:\/\//, "");
   const check = async (key: string) => {
     if (demo) return "ok" as const;
     const s = p.spinner();
-    s.start(`Checking the key with ${base.replace(/^https:\/\//, "")}`);
-    const { result } = await checkKey(base, config.apiPath, key);
-    if (result === "ok") s.stop("Key accepted");
-    else if (result === "rejected") s.error(`${base} rejected this key`);
+    const also = deskServer && deskServer !== base;
+    s.start(
+      `Checking the key with ${short(base)}${also ? ` and this desk's server ${short(deskServer)}` : ""}`,
+    );
+    const route = await routeKey(base, deskServer, config.apiPath, key, {
+      checkHome: true,
+    });
+    const said = (where: string, r?: string) =>
+      r === "rejected"
+        ? `${where} rejected this key`
+        : r === "unreachable"
+          ? `Could not reach ${where} (VPN?)`
+          : `${where} answered without the public API`;
+    if (route.result === "ok")
+      s.stop(
+        route.origin === base
+          ? "Key accepted"
+          : `Key accepted by this desk's server ${short(route.origin)}; requests from this desk go there${route.home === "ok" ? "" : ` (${said(short(base), route.home)})`}`,
+      );
     else
       s.error(
-        result === "unreachable"
-          ? `Could not reach ${base} (VPN?)`
-          : `${base} answered without the public API`,
+        [
+          said(base, route.home),
+          ...(route.server
+            ? [said(`this desk's server ${deskServer}`, route.server)]
+            : []),
+        ].join("; "),
       );
-    return result;
+    return route.result!;
   };
   let key: string | undefined;
   if (yes) {

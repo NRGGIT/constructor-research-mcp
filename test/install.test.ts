@@ -372,6 +372,66 @@ test("install: -y writes the entries and saves the key read from stdin, never ec
   }
 });
 
+test("install inside a desk: the key is checked with the desk's server too and saved for the user's Constructor", async () => {
+  const home = temp();
+  mkdirSync(join(home, ".codex"));
+  const { createServer } = await import("node:http");
+  const key = "rk-test-0123456789abcdef";
+  const serve = (accepts: boolean) =>
+    createServer((req, res) => {
+      res.statusCode =
+        accepts && req.headers["x-research-accesskey"] === `Bearer ${key}`
+          ? 200
+          : 401;
+      res.end("{}");
+    });
+  // The desk names a server that accepts the key; the address the user gives refuses it.
+  const desk = serve(true);
+  const user = serve(false);
+  for (const s of [desk, user])
+    await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+  const deskServer = `http://127.0.0.1:${(desk.address() as any).port}`;
+  const userUrl = `http://localhost:${(user.address() as any).port}`;
+  const deskEnv = {
+    HOME: home,
+    ROLOS_PROJECT_ID: "pppp1111",
+    ROLOS_DESK_ID: "dddd2222",
+    ROLOS_API_SERVER: deskServer,
+  };
+  try {
+    const keyFile = join(home, "key.json");
+    const run = await setup(
+      [
+        "-y",
+        "--agents=codex",
+        "--scope=global",
+        `--constructor=${userUrl}`,
+        "--key-stdin",
+      ],
+      { ...deskEnv, CONSTRUCTOR_KEY_FILE: keyFile },
+      key + "\n",
+    );
+    assert.equal(run.code, 0, run.out);
+    assert.match(
+      run.out,
+      /accepted by this desk's server http:\/\/127\.0\.0\.1.*localhost:\d+ rejected this key/,
+    );
+    assert.deepEqual(json(keyFile), { url: userUrl, key });
+    // Without --constructor, -y inside a desk takes the desk's server.
+    const plain = join(home, "plain.json");
+    const byDesk = await setup(
+      ["-y", "--agents=codex", "--scope=global", "--key-stdin"],
+      { ...deskEnv, CONSTRUCTOR_KEY_FILE: plain },
+      key + "\n",
+    );
+    assert.equal(byDesk.code, 0, byDesk.out);
+    assert.equal(json(plain).url, deskServer);
+  } finally {
+    desk.close();
+    user.close();
+  }
+});
+
 test("install: refuses keys as arguments, unknown options and a missing terminal", async () => {
   const home = temp();
   assert.equal((await setup(["rk-abcdefgh12345"], { HOME: home })).code, 2);

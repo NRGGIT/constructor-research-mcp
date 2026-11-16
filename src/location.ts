@@ -38,8 +38,15 @@ function bad(code: string, message: string): never {
   throw new ToolError(code, message);
 }
 
-/** Project and desk IDs from a desk link; the host must be the Constructor this MCP uses. */
-export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
+/**
+ * Project and desk IDs from a desk link. Its host must be the user's Constructor (the first
+ * address) or, inside a desk, the server that desk names, which may differ from it.
+ */
+export function parseDeskUrl(
+  link: string,
+  baseUrl: string | string[],
+  fixed = false,
+) {
   let url: URL;
   try {
     url = new URL(link.trim());
@@ -54,12 +61,12 @@ export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
       "invalid_input",
       "desk_url must contain /projects/<project>/desks/<desk>. Ask the user to open the desk in Constructor and copy the address bar.",
     );
-  const base = new URL(baseUrl).origin;
-  if (url.origin !== base)
+  const [base, ...also] = [baseUrl].flat().map((u) => new URL(u).origin);
+  if (url.origin !== base && !also.includes(url.origin))
     bad(
       "wrong_environment",
       fixed
-        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL or the desk it runs in. Ask the user for a link from ${base}.`
+        ? `The link is for ${url.origin}, but this MCP is fixed to ${base} by CONSTRUCTOR_BASE_URL. Ask the user for a link from ${base}.`
         : `The link is for ${url.origin}, but the saved access key is for ${base}. If they work on ${url.origin}, the user saves a key for it in a terminal (it replaces the key for ${base}): npx -y -p constructor-research-mcp@${VERSION} constructor-research-set-key ${url.origin}. Never ask for the key in the chat.`,
     );
   return { project_id: m[1], desk_id: m[2] };
@@ -68,7 +75,7 @@ export function parseDeskUrl(link: string, baseUrl: string, fixed = false) {
 /** Replace desk_url with the IDs it carries; explicit IDs must agree with it. */
 export function resolveDeskUrl(
   args: any,
-  baseUrl: string,
+  baseUrl: string | string[],
   scope: Scope,
   fixed = false,
 ) {

@@ -4,8 +4,13 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { localDeskFromEnv, type LocalDesk } from "./desk.js";
 export interface Config {
-  /** The Constructor the MCP works with: CONSTRUCTOR_BASE_URL, else the one the saved key belongs to. */
+  /**
+   * The user's Constructor: CONSTRUCTOR_BASE_URL, else the one the saved key belongs to, else
+   * the desk's. Links shown to the user, key help and the key file name it. Requests go there
+   * too, unless the desk's own server accepts the key (see PlatformApi.origin).
+   */
   baseUrl: string;
+  /** Set by CONSTRUCTOR_BASE_URL: a saved key for another Constructor is not used. */
   baseUrlFixed?: boolean;
   /** The Constructor desk this MCP runs inside (VS Code in Constructor Research), if any. */
   localDesk?: LocalDesk;
@@ -55,7 +60,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
         "CONSTRUCTOR_BASE_URL must be an origin without a path or credentials.",
       );
   }
-  // Inside a Constructor desk, its Constructor is the one to work with.
+  // Inside a Constructor desk, its server is where the user works unless a key says otherwise.
   const localDesk = localDeskFromEnv(env, originOf);
   const baseUrl = originOf(fixed ?? localDesk?.server ?? DEFAULT_BASE_URL);
   const apiPath = env.CONSTRUCTOR_API_PATH ?? "/api/platform-account/v1";
@@ -71,7 +76,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     resolve(s.startsWith("~/") ? homedir() + s.slice(1) : s);
   return {
     baseUrl,
-    baseUrlFixed: !!fixed || !!localDesk?.server,
+    baseUrlFixed: !!fixed,
     localDesk,
     apiPath: apiPath.replace(/\/$/, ""),
     storagePath: storagePath.replace(/\/$/, ""),

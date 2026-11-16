@@ -11,6 +11,10 @@ import { platform, P, D } from "./platform.js";
 const ACCESS = (f: any) => ({ CONSTRUCTOR_KEY_FILE: f.config.keyFile });
 import { configFromEnv, originOf } from "../src/config.js";
 import { diskPath, localDeskFromEnv, localPath } from "../src/desk.js";
+import { PlatformApi } from "../src/api.js";
+import { routeKey, saveKeyFile } from "../src/key.js";
+import { createServer } from "node:http";
+import { KEY } from "./platform.js";
 
 const ENV = {
   HOME: "/home/coder",
@@ -49,8 +53,9 @@ test("the desk is read from the environment Constructor sets in VS Code", () => 
   );
   assert.equal(localDeskFromEnv({ HOME: "/h" }, originOf), undefined);
   const config = configFromEnv(ENV);
+  // The desk's server is where the user works until a saved key names their Constructor.
   assert.equal(config.baseUrl, "https://constructor.app");
-  assert.equal(config.baseUrlFixed, true);
+  assert.equal(config.baseUrlFixed, false);
   assert.equal(config.localDesk?.deskId, ENV.ROLOS_DESK_ID);
   // An explicit CONSTRUCTOR_BASE_URL still wins.
   assert.equal(
@@ -196,5 +201,157 @@ test("inside a desk, tools default to it, never use WebDAV for it, and read Dock
     await client.close();
     await f.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** A Constructor that refuses every key. */
+async function refusing() {
+  const server = createServer((_req, res) => {
+    res.writeHead(401);
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `http://127.0.0.1:${(server.address() as any).port}`,
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
+test("setup checks the key with the user's Constructor and the desk's server, and requests go to the server when it accepts the key", async () => {
+  const f = await platform();
+  const port = new URL(f.config.baseUrl).port;
+  // Two origins, one Constructor: the user opens it as localhost, the desk names 127.0.0.1.
+  const home = `http://localhost:${port}`;
+  const server = f.config.baseUrl;
+  const no = await refusing();
+  try {
+    const both = await routeKey(home, server, f.config.apiPath, KEY, {
+      checkHome: true,
+    });
+    assert.deepEqual(both, {
+      origin: server,
+      result: "ok",
+      home: "ok",
+      server: "ok",
+    });
+    // Only the desk's server accepts the key: still accepted, and it is used.
+    const onlyServer = await routeKey(no.url, server, f.config.apiPath, KEY, {
+      checkHome: true,
+    });
+    assert.equal(onlyServer.result, "ok");
+    assert.equal(onlyServer.origin, server);
+    assert.equal(onlyServer.home, "rejected");
+    // The desk's server refuses it: the user's Constructor is used.
+    const onlyHome = await routeKey(home, no.url, f.config.apiPath, KEY, {
+      checkHome: true,
+    });
+    assert.deepEqual(onlyHome, {
+      origin: home,
+      result: "ok",
+      home: "ok",
+      server: "rejected",
+    });
+    const neither = await routeKey(no.url, no.url, f.config.apiPath, KEY, {
+      checkHome: true,
+    });
+    assert.equal(neither.result, "rejected");
+    // Outside a desk nothing is asked.
+    assert.deepEqual(await routeKey(home, undefined, f.config.apiPath, KEY), {
+      origin: home,
+      result: undefined,
+      home: undefined,
+      server: undefined,
+    });
+  } finally {
+    await no.close();
+    await f.close();
+  }
+});
+
+test("inside a desk whose server differs from the key's Constructor, the MCP works through the server and keeps the user's address for links and key help", async () => {
+  const f = await platform();
+  const port = new URL(f.config.baseUrl).port;
+  const home = `http://localhost:${port}`;
+  const keyFile = join(f.dir, "home-key.json");
+  await saveKeyFile(keyFile, home, KEY);
+  const env = {
+    ...ENV,
+    HOME: f.dir,
+    ROLOS_PROJECT_ID: P,
+    ROLOS_DESK_ID: D,
+    ROLOS_API_SERVER: f.config.baseUrl,
+    CONSTRUCTOR_KEY_FILE: keyFile,
+    CONSTRUCTOR_STATE_DIR: f.config.stateDir,
+  };
+  const api = new PlatformApi(configFromEnv(env));
+  await api.refresh();
+  assert.equal(api.config.baseUrl, home);
+  f.db.hosts.length = 0;
+  await api.request("GET", "/projects");
+  // One check of the key with the desk's server, then the request, both there.
+  assert.deepEqual(f.db.hosts, ["127.0.0.1", "127.0.0.1"]);
+  await api.request("GET", "/projects");
+  assert.equal(f.db.hosts.length, 3, "the answer is kept for the same key");
+  assert.match(api.keyHelp(), new RegExp(`set-key ${home}`));
+
+  // A desk server that refuses the key: requests go to the user's Constructor.
+  const no = await refusing();
+  try {
+    const api2 = new PlatformApi(
+      configFromEnv({ ...env, ROLOS_API_SERVER: no.url }),
+    );
+    await api2.refresh();
+    f.db.hosts.length = 0;
+    await api2.request("GET", "/projects");
+    assert.deepEqual(f.db.hosts, ["localhost"]);
+  } finally {
+    await no.close();
+  }
+
+  // Through the MCP: desk links from either address work, and the desk is the default.
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [resolve(import.meta.dirname, "../dist/server.js")],
+    env: {
+      PATH: process.env.PATH!,
+      ...env,
+      CONSTRUCTOR_READINESS_SECONDS: "0",
+      CONSTRUCTOR_UPLOAD_SETTLE_SECONDS: "0",
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "desk-server", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    f.db.hosts.length = 0;
+    const here: any = await client.callTool({
+      name: "list_images",
+      arguments: {},
+    });
+    assert.equal(
+      here.isError,
+      undefined,
+      JSON.stringify(here.structuredContent),
+    );
+    assert.deepEqual([...new Set(f.db.hosts)], ["127.0.0.1"]);
+    for (const origin of [home, f.config.baseUrl]) {
+      const r: any = await client.callTool({
+        name: "list_images",
+        arguments: {
+          desk_url: `${origin}/research/projects/${P}/desks/${D}/viewer/file`,
+        },
+      });
+      assert.equal(r.isError, undefined, JSON.stringify(r.structuredContent));
+    }
+    const foreign: any = await client.callTool({
+      name: "list_images",
+      arguments: {
+        desk_url: `https://acme.constructor.app/research/projects/${P}/desks/${D}`,
+      },
+    });
+    assert.equal(foreign.structuredContent.status, "wrong_environment");
+  } finally {
+    await client.close();
+    await f.close();
   }
 });
