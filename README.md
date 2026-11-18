@@ -1,6 +1,8 @@
 # Constructor Research MCP
 
-> **0.6.3:** with no project or desk named (and not inside a desk), `deploy_app` creates a new project from a short `project_name` and deploys there. `delete_resources` deletes applications, services and images, after the user approves the list.
+> **0.6.4:** with no project or desk named (and not inside a desk), `deploy_app` creates a new project from a short `project_name` and deploys there.
+>
+> **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list.
 >
 > **0.6.2:** a ready-made image works on a project with deployment off (it is switched on first); logs keep 2000 lines per build or service for 14 days, services are followed for two hours, and `watched` says when.
 >
