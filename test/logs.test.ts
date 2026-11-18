@@ -295,15 +295,16 @@ test("kept log files are rotated: old ones go, then the oldest beyond the size l
       await utimes(join(dir, name), t, t);
     };
     await put("build-old00001.json", 20);
-    await put("service-recent01.json", 1, 600);
-    await put("service-recent02.json", 2, 600);
-    await put("build-newest01.json", 0, 600);
+    await put("service-recent01.json", 1, 1000);
+    await put("service-recent02.json", 2, 1000);
+    await put("build-newest01.json", 0, 1000);
     await put("notes.txt", 30); // not ours: left alone
     // A log being followed now is never deleted, however old its file looks.
     f.db.log("svcfollow", at(1, "up"));
     f.logs.follow("svcfollow", "service");
     await put("service-svcfollow.json", 30);
-    f.logs.maxBytes = 1300;
+    // The followed log's own file may be rewritten meanwhile (a few hundred bytes).
+    f.logs.maxBytes = 2600;
     await f.logs.rotate();
     assert.deepEqual((await readdir(dir)).sort(), [
       "build-newest01.json",
