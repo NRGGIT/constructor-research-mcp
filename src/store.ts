@@ -57,8 +57,6 @@ export interface Operation {
     image_name?: string;
     first_image_name?: string;
     desk_link?: string;
-    /** "builder": Constructor's builder failed before the Dockerfile ran. */
-    cause?: string;
     /** Last build log lines, when the MCP followed the build. */
     log_tail?: string[];
   };

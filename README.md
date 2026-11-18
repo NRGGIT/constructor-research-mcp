@@ -1,6 +1,6 @@
 # Constructor Research MCP
 
-> **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list. A build that Constructor's builder breaks before the Dockerfile runs is reported as such (`failure.cause: builder`), not as a Dockerfile problem.
+> **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list.
 >
 > **0.6.2:** a ready-made image works on a project with deployment off (it is switched on first); logs keep 2000 lines per build or service for 14 days, services are followed for two hours, and `watched` says when.
 >
@@ -262,7 +262,6 @@ Learned from live runs (28 Oct 2026):
 - **Upload settle.** A build started right after its Dockerfile was uploaded failed every time; with a pause it built first time. After any upload to a disk, builds on that disk wait until 30 s have passed (status `preparing`, message says so). `CONSTRUCTOR_UPLOAD_SETTLE_SECONDS` changes it; 0 disables.
 - **Confirmed failure, one automatic rebuild.** The platform briefly reports `error` and then `in_progress` again, so an error counts only when seen twice for the same image. The first confirmed failure is rebuilt once under a new image name, after re-uploading `local_path` sources and re-checking the Dockerfile on the disk. `build_retried` names the image that failed.
 - **Actionable failure.** A build that fails again returns `failure.image_name`, `first_image_name`, `desk_link`, and a message saying how to see the log: Constructor does not keep build logs, so rebuild that Dockerfile from the UI and watch it live.
-- **Builder failures.** When the build log shows an error before the first `STEP n/m:` line, Constructor's builder failed before it ran the Dockerfile (for example `registries.conf must be in v2 format but is in v1`, its own configuration). The failure then carries `cause: "builder"`, and the message tells the agent not to change the Dockerfile or sources, to tell the user it needs Constructor support, and to resume with `deployment_id` once the builder works; services that can run from a public image can use `image`, which needs no build.
 - **Readiness check.** After start, the MCP requests each public URL until it answers (any HTTP status below 500) or 60 s pass (status `verifying`). `readiness` is then `http_ok`, `not_responding` (with `readiness_checks` and a hint; services of the deployment that printed nothing since starting are named, with an ordered checklist: entrypoint not executable, wrong entrypoint path, nginx IPv6 listen, wrong listen address or port), or `no_public_url`. `CONSTRUCTOR_READINESS_SECONDS` changes the window; 0 disables.
 
 ## State and recovery

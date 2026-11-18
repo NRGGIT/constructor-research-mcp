@@ -124,9 +124,7 @@ Roughly in this order; each step is idempotent and skipped when already done:
    `image_id` skip this; a resumed operation keeps the builds it already finished). The
    MCP polls `build_status`, follows the build log, and retries a failed build once (the
    platform briefly reports `error` while it retries, so an error counts on the second
-   sighting). A failure whose log has an error before the first `STEP n/m:` line is the
-   builder's own (`failure.cause: builder`, `builderError`): the agent is told not to touch
-   the Dockerfile.
+   sighting).
 5. **Configure** — services are created or patched in dependency order. References between
    services (`{"service": "api", "port": 3000}`) are resolved to internal addresses
    (`svc-<name>.app-<id>.svc.cluster.local:<port>`) or public URLs.
