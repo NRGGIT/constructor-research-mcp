@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list.
+>
 > **0.6.2:** a ready-made image works on a project with deployment off (it is switched on first); logs keep 2000 lines per build or service for 14 days, services are followed for two hours, and `watched` says when.
 >
 > **0.6.1:** inside a Constructor desk, a key saved for your Constructor works even when the desk names another address for it (`ROLOS_API_SERVER`, e.g. `constructor.app` in a desk opened on `acme.constructor.app`).
@@ -91,24 +93,25 @@ When the MCP runs in VS Code inside a Constructor Research desk, it finds that d
 
 `CONSTRUCTOR_LOCAL_DESK=0` turns this off.
 
-## Thirteen tools
+## Fourteen tools
 
-| Tool                     | Agent's task                                                                        |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| `deploy_app`             | Describe all services in one request, or resume that deployment with overrides.     |
-| `update_app`             | Describe selected changes/additions; the MCP builds and restarts affected services. |
-| `start_app` / `stop_app` | Request lifecycle changes for all or selected services.                             |
-| `get_deployment`         | Map all deployments, inspect a project or app, or wait for background execution.    |
-| `get_logs`               | Last 10–500 lines of a build or service log (see "Logs").                           |
-| `build_image`            | Build an image independently when needed.                                           |
-| `list_images`            | List image IDs, Dockerfiles and native build statuses.                              |
-| `list_files`             | List a disk's files and folders; `recursive:true` walks subfolders.                 |
-| `create_folder`          | Create a disk folder, including missing parents.                                    |
-| `sync_files`             | Upload new and changed files; asks once before replacing existing files.            |
-| `move_path`              | Rename or move files/folders in one batch, approved once; never overwrites.         |
-| `delete_path`            | Delete files/folders in one batch; reports first, deletes only with `confirm:true`. |
+| Tool                     | Agent's task                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `deploy_app`             | Describe all services in one request, or resume that deployment with overrides.                |
+| `update_app`             | Describe selected changes/additions; the MCP builds and restarts affected services.            |
+| `start_app` / `stop_app` | Request lifecycle changes for all or selected services.                                        |
+| `delete_resources`       | Delete applications, single services or images; lists them first, deletes with `confirm:true`. |
+| `get_deployment`         | Map all deployments, inspect a project or app, or wait for background execution.               |
+| `get_logs`               | Last 10–500 lines of a build or service log (see "Logs").                                      |
+| `build_image`            | Build an image independently when needed.                                                      |
+| `list_images`            | List image IDs, Dockerfiles and native build statuses.                                         |
+| `list_files`             | List a disk's files and folders; `recursive:true` walks subfolders.                            |
+| `create_folder`          | Create a disk folder, including missing parents.                                               |
+| `sync_files`             | Upload new and changed files; asks once before replacing existing files.                       |
+| `move_path`              | Rename or move files/folders in one batch, approved once; never overwrites.                    |
+| `delete_path`            | Delete files/folders in one batch; reports first, deletes only with `confirm:true`.            |
 
-No special clone/new-instance workflow is implemented. The thirteen tools use the same standard MCP transport across harnesses.
+No special clone/new-instance workflow is implemented. The fourteen tools use the same standard MCP transport across harnesses.
 
 ## Where to act: the desk link
 
@@ -227,6 +230,15 @@ After the user selects a replacement, call the original tool (`deploy_app` or `u
 Successful builds and unchanged service definitions are retained. Environment overrides merge with saved values. Supplying a new `build` source retries that service's build; the previous successful builds are reused. Overrides cannot add services that were not in the saved operation; use a new update for additions.
 
 A failed build returns `failure.stage`, `failure.service`, `failure.dockerfile` and `failure.image_id`. A service API failure includes the stage and service. The message is concise: **“Please check the logs in Constructor.”** Logs and browser access are not part of this workflow.
+
+## Deleting applications, services and images
+
+`delete_resources` takes `project_id` (or `desk_url`) and any of `application_ids` (each with all its services), `service_ids` (the rest of the application stays) and `image_ids`. Without `confirm` it changes nothing and returns `confirm_required` with what would go: services, public URLs, and volumes whose data would be lost. The agent asks the user once for the whole list and repeats the call with `confirm:true`. Then the MCP:
+
+- ends unfinished deployments of the affected applications (`superseded`), so none of them recreates what is deleted;
+- deletes services, then applications, then images (an image is free once its services are gone);
+- keeps an image that a service not being deleted still uses (`kept_in_use`), and reports IDs that are not in the project (`not_found`);
+- reports each item as `deleted`, `already_gone`, `failed` or `uncertain` (`status: partial` when any was not deleted).
 
 ## Service links and volumes
 

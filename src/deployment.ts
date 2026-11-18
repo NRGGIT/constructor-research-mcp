@@ -11,6 +11,7 @@ import {
   listInput,
   lifecycleInput,
   getInput,
+  deleteInput,
   type ServiceInput,
 } from "./schemas.js";
 
@@ -544,6 +545,233 @@ export class DeploymentEngine {
       }
       throw err;
     }
+  }
+  /**
+   * Deletes applications (with all their services), single services and images of one
+   * project. Without confirm it only reports what would go, including public URLs and
+   * volumes whose data is lost, for the user to approve once. An image that a service
+   * not being deleted still uses is kept. Unfinished deployments of affected
+   * applications are ended first, so they cannot recreate what was deleted.
+   */
+  async deleteResources(raw: unknown) {
+    const i = deleteInput.parse(raw);
+    if (
+      !i.application_ids?.length &&
+      !i.service_ids?.length &&
+      !i.image_ids?.length
+    )
+      bad("Name at least one application, service or image to delete.");
+    const project = i.project_id;
+    await this.project(project);
+    const apps = await this.apps(project);
+    const images = await this.images(project);
+    const not_found: string[] = [];
+    const describe = (sv: any, app: any) => {
+      const v = publicService(sv, project, app.id);
+      return {
+        service_id: sv.id,
+        name: sv.name,
+        application_id: app.id,
+        application_name: app.name,
+        public_url: v.public_url,
+        volumes: (sv.volumes ?? []).map(
+          (x: any) =>
+            `${x.mount_point ?? x.name}${x.size_gb ? ` (${x.size_gb} GB)` : ""}`,
+        ),
+      };
+    };
+    const applications = [...new Set(i.application_ids ?? [])].flatMap((id) => {
+      const app = apps.find((a) => a.id === id);
+      if (!app) {
+        not_found.push(`application ${id}`);
+        return [];
+      }
+      return [
+        {
+          application_id: app.id,
+          name: app.name,
+          services: (app.services ?? []).map((sv: any) => describe(sv, app)),
+        },
+      ];
+    });
+    const goingApps = new Set(applications.map((a) => a.application_id));
+    const services = [...new Set(i.service_ids ?? [])].flatMap((id) => {
+      const app = apps.find((a) =>
+        (a.services ?? []).some((sv: any) => sv.id === id),
+      );
+      if (!app) {
+        not_found.push(`service ${id}`);
+        return [];
+      }
+      // Goes with its application anyway.
+      if (goingApps.has(app.id)) return [];
+      return [
+        describe(
+          app.services.find((sv: any) => sv.id === id),
+          app,
+        ),
+      ];
+    });
+    const goingServices = new Set([
+      ...services.map((sv) => sv.service_id),
+      ...applications.flatMap((a) =>
+        a.services.map((sv: any) => sv.service_id),
+      ),
+    ]);
+    const kept: { image_id: string; name: string; used_by: string[] }[] = [];
+    const imageRows = [...new Set(i.image_ids ?? [])].flatMap((id) => {
+      const im = images.find((x) => x.id === id);
+      if (!im) {
+        not_found.push(`image ${id}`);
+        return [];
+      }
+      const used_by = apps.flatMap((a) =>
+        (a.services ?? [])
+          .filter((sv: any) => sv.image_id === id && !goingServices.has(sv.id))
+          .map((sv: any) => `${a.name}/${sv.name}`),
+      );
+      if (used_by.length) {
+        kept.push({ image_id: id, name: im.name, used_by });
+        return [];
+      }
+      return [
+        {
+          image_id: id,
+          name: im.name,
+          source: im.source,
+          reference: im.reference,
+          desk_name: im.desk_name,
+        },
+      ];
+    });
+    const plan = { applications, services, images: imageRows };
+    const count = applications.length + services.length + imageRows.length;
+    const notes = [
+      kept.length
+        ? `Kept, still used by a service that stays: ${kept.map((k) => `${k.name} (${k.used_by.join(", ")})`).join("; ")}.`
+        : "",
+      not_found.length ? `Not in this project: ${not_found.join(", ")}.` : "",
+    ].filter(Boolean);
+    if (!count)
+      return {
+        status: "nothing_to_delete",
+        message: ["Nothing was deleted.", ...notes].join(" "),
+        kept_in_use: kept,
+        not_found,
+      };
+    if (!i.confirm) {
+      const volumes = [
+        ...applications.flatMap((a) => a.services),
+        ...services,
+      ].flatMap((sv: any) =>
+        sv.volumes.map(
+          (v: string) => `${sv.application_name}/${sv.name}: ${v}`,
+        ),
+      );
+      return {
+        status: "confirm_required",
+        message: [
+          `${count} item${count > 1 ? "s" : ""} would be deleted. This cannot be undone; public URLs stop working${volumes.length ? ` and these volumes lose all their data: ${volumes.join("; ")}` : ""}. Nothing was changed: ask the user once to approve the whole list, then repeat the same call with confirm=true.`,
+          ...notes,
+        ].join(" "),
+        delete: plan,
+        kept_in_use: kept,
+        not_found,
+      };
+    }
+    // End unfinished deployments of these applications first, under the lock, so none of
+    // them recreates a service after it is deleted.
+    const touched = new Set([
+      ...goingApps,
+      ...services.map((sv) => sv.application_id),
+    ]);
+    const ended: string[] = [];
+    await this.store.exclusive(async () => {
+      for (const id of await this.store.ids()) {
+        let op: Operation | undefined;
+        try {
+          op = await this.store.load(id);
+        } catch {
+          continue;
+        }
+        if (!op?.application_id || !touched.has(op.application_id)) continue;
+        if (terminal.has(op.status)) continue;
+        op.status = "superseded";
+        delete op.pending;
+        op.message =
+          "Ended because its application or services were deleted (delete_resources).";
+        await this.store.save(op);
+        ended.push(op.id);
+      }
+    });
+    const results: {
+      kind: string;
+      id: string;
+      name: string;
+      result: string;
+    }[] = [];
+    const remove = async (
+      kind: string,
+      path: string,
+      id: string,
+      name: string,
+    ) => {
+      try {
+        await this.api.request("DELETE", path);
+        results.push({ kind, id, name, result: "deleted" });
+      } catch (err) {
+        if (!(err instanceof ToolError) || err.code === "needs_key") throw err;
+        const gone =
+          err.status === 404 ||
+          (err.status === 421 && /not found/i.test(err.reason ?? ""));
+        results.push({
+          kind,
+          id,
+          name,
+          result: gone
+            ? "already_gone"
+            : err.code === "api_error"
+              ? `failed: ${err.message}`
+              : `uncertain: ${err.message} Check with get_deployment or list_images.`,
+        });
+      }
+    };
+    // Services, then applications, then images: an image is free once its services are gone.
+    for (const sv of services)
+      await remove(
+        "service",
+        `/services/${e(sv.service_id)}`,
+        sv.service_id,
+        sv.name,
+      );
+    for (const a of applications)
+      await remove(
+        "application",
+        `/applications/${e(a.application_id)}`,
+        a.application_id,
+        a.name,
+      );
+    for (const im of imageRows)
+      await remove("image", `/images/${e(im.image_id)}`, im.image_id, im.name);
+    const failed = results.filter(
+      (r) => !/^(deleted|already_gone)$/.test(r.result),
+    );
+    return {
+      status: failed.length ? "partial" : "deleted",
+      message: [
+        `Deleted ${results.length - failed.length} of ${results.length}${failed.length ? `; ${failed.length} not deleted (see results)` : ""}.`,
+        ended.length
+          ? `Ended unfinished deployment${ended.length > 1 ? "s" : ""} ${ended.join(", ")}.`
+          : "",
+        ...notes,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      results,
+      ended_deployments: ended,
+      kept_in_use: kept,
+      not_found,
+    };
   }
   async listImages(raw: unknown) {
     const input = listInput.parse(raw);

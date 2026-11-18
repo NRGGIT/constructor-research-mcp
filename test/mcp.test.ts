@@ -5,7 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { resolve } from "node:path";
 import { platform, KEY, P, D } from "./platform.js";
 
-test("stdio exposes thirteen tools (no sign-in) and executes discovery, validation and image listing without stdout noise", async () => {
+test("stdio exposes fourteen tools (no sign-in) and executes discovery, validation and image listing without stdout noise", async () => {
   const f = await platform();
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -31,6 +31,7 @@ test("stdio exposes thirteen tools (no sign-in) and executes discovery, validati
       "build_image",
       "create_folder",
       "delete_path",
+      "delete_resources",
       "deploy_app",
       "get_deployment",
       "get_logs",

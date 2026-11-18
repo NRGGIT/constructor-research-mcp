@@ -270,6 +270,40 @@ export async function platform() {
       db.applications.push(a);
       return send(a);
     }
+    // Deletes, like the public API: 204, or 421 "... not found" for an unknown ID.
+    const del = path.match(/^\/(applications|services|images)\/([^/]+)$/);
+    if (del && req.method === "DELETE") {
+      const [, kind, id] = del;
+      const gone = (what: string) =>
+        send(
+          {
+            detail: {
+              msg: "Not found",
+              error_code: 404,
+              info: { details: `${what} not found` },
+            },
+          },
+          421,
+        );
+      if (db.failDelete === id)
+        return send({ detail: { msg: "Error", error_code: 99999 } }, 409);
+      if (kind === "applications") {
+        const at = db.applications.findIndex((a: any) => a.id === id);
+        if (at < 0) return gone("Application");
+        db.applications.splice(at, 1);
+      } else if (kind === "services") {
+        const owner = db.applications.find((a: any) =>
+          a.services.some((x: any) => x.id === id),
+        );
+        if (!owner) return gone("Service");
+        owner.services = owner.services.filter((x: any) => x.id !== id);
+      } else {
+        const at = db.images.findIndex((x: any) => x.id === id);
+        if (at < 0) return gone("Image");
+        db.images.splice(at, 1);
+      }
+      return send(undefined, 204);
+    }
     const app = db.applications.find((a: any) => a.id === A);
     if (path === `/applications/${A}/services` && req.method === "POST") {
       const sv = {

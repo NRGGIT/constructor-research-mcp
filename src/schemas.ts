@@ -329,6 +329,30 @@ const confirm = z
   .describe(
     "false (default) returns the full list for the user to approve once; true performs it.",
   );
+export const deleteInput = z.strictObject({
+  project_id: id,
+  application_ids: z
+    .array(id)
+    .max(20)
+    .optional()
+    .describe("Applications to delete, each with all its services."),
+  service_ids: z
+    .array(id)
+    .max(50)
+    .optional()
+    .describe(
+      "Services to delete; the rest of their application stays (services[].id in get_deployment).",
+    ),
+  image_ids: z
+    .array(id)
+    .max(50)
+    .optional()
+    .describe(
+      "Images to delete (list_images). An image a remaining service uses is kept.",
+    ),
+  confirm,
+});
+
 export const movePathInput = z.strictObject({
   project_id: id,
   desk_id: id,
