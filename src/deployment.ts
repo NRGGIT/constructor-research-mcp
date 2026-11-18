@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { PlatformApi, ToolError, segment as e } from "./api.js";
 import { StateStore, type Operation } from "./store.js";
 import type { FileManager } from "./files.js";
-import type { LogFollower } from "./logs.js";
+import { KEEP, type LogFollower } from "./logs.js";
 import {
   deployInput,
   updateInput,
@@ -26,6 +26,26 @@ export const terminal = new Set([
   "confirm_required",
   "superseded",
 ]);
+/**
+ * The first error of a build that failed before the builder ran any Dockerfile step, or
+ * undefined. Constructor's builder (buildah) prints "STEP n/m:" for each instruction; an
+ * error before the first one comes from the builder itself, e.g. its own registries.conf
+ * ("registries.conf must be in v2 format but is in v1"), not from the user's Dockerfile.
+ */
+export function builderError(lines: string[]) {
+  const step = lines.findIndex((l) => /\bSTEP \d+\/\d+:/.test(l));
+  const before = step < 0 ? lines : lines.slice(0, step);
+  const error = before.find((l) =>
+    /\b(error|fatal)\b|level=(error|fatal)|must be in v2 format/i.test(l),
+  );
+  if (!error) return undefined;
+  // Without its timestamp, one line, short enough to repeat in a message.
+  const text = error
+    .replace(/^\d{4}-\d\d-\d\dT\S+\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 200 ? text.slice(0, 200) + "…" : text;
+}
 /** What to check when a public URL does not answer, ordered by how often it was the cause. */
 function silentHint(silent?: string[]) {
   if (!silent?.length)
@@ -327,7 +347,16 @@ export class DeploymentEngine {
     };
     const log = await this.logs?.peek(image.id, "build", 20);
     if (log) op.failure.log_tail = log.lines;
-    op.message = `Image build${service ? ` for ${service}` : ""} failed${first ? ` twice (${first}, then ${image.name} after re-checking the files)` : ` (${image.name})`}. ${
+    const what = `Image build${service ? ` for ${service}` : ""} failed${first ? ` twice (${first}, then ${image.name} after re-checking the files)` : ` (${image.name})`}.`;
+    const all = await this.logs?.peek(image.id, "build", KEEP);
+    const broken = all && builderError(all.lines);
+    if (broken) {
+      // Nothing the agent changes in the Dockerfile or the sources can help here.
+      op.failure.cause = "builder";
+      op.message = `${what} Constructor's image builder failed before it ran the Dockerfile (${broken}). This is not a problem in the Dockerfile or the sources: do not change them. Tell the user that Constructor's builder is failing and that it needs Constructor support. When it works again, resume with deploy_app and this deployment_id (finished builds are kept). Services that can run from a public registry image can use image instead, which needs no build. failure.log_tail has the last log lines.`;
+      return;
+    }
+    op.message = `${what} ${
       log
         ? "The last build log lines are in failure.log_tail (get_logs with the image ID shows up to 500)."
         : `No build log was captured. To see the error, open the desk (${link}), rebuild ${dockerfile} from the UI and watch the live log.`

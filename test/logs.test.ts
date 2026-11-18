@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { platform, P, D } from "./platform.js";
 import { DeploymentRuntime } from "../src/runtime.js";
 import { LogFollower, KEEP } from "../src/logs.js";
+import { builderError } from "../src/deployment.js";
 
 const two = (n: number) => String(n).padStart(2, "0");
 const line = (n: number) =>
@@ -122,7 +123,7 @@ test("a failed build reports the last log lines in failure.log_tail", async () =
     let image = f.db.images.at(-1);
     f.db.log(
       image.id,
-      line(1),
+      `${line(1).slice(0, 31)}STEP 1/3: FROM rust:1.82`,
       `${line(2).slice(0, 31)}error: cannot find crate`,
     );
     await eventually(() => f.db.logRequests > 0);
@@ -132,7 +133,11 @@ test("a failed build reports the last log lines in failure.log_tail", async () =
     f.db.endLog(image.id);
     await eventually(() => f.db.images.length === 3);
     image = f.db.images.at(-1);
-    f.db.log(image.id, line(3), `${line(4).slice(0, 31)}error: still broken`);
+    f.db.log(
+      image.id,
+      `${line(3).slice(0, 31)}STEP 1/3: FROM rust:1.82`,
+      `${line(4).slice(0, 31)}error: still broken`,
+    );
     await eventually(() => f.db.logRequests > 2);
     await delay(50);
     image.build_status = "error";
@@ -144,6 +149,9 @@ test("a failed build reports the last log lines in failure.log_tail", async () =
     assert.equal(done.status, "failed");
     assert.match(done.failure.log_tail.at(-1), /error: still broken/);
     assert.match(done.message, /failure\.log_tail/);
+    // A Dockerfile error: the agent is told to fix it.
+    assert.equal(done.failure.cause, undefined);
+    assert.match(done.message, /Fix the Dockerfile/);
   } finally {
     await runtime.close();
     await f.close();
@@ -312,6 +320,66 @@ test("kept log files are rotated: old ones go, then the oldest beyond the size l
       "service-svcfollow.json",
     ]);
   } finally {
+    await f.close();
+  }
+});
+
+test("a builder that fails before the first Dockerfile step is reported as Constructor's problem, not the Dockerfile's", async () => {
+  // As seen on Constructor: buildah stops on its own config before STEP 1.
+  const seen = [
+    "Container is waiting to start... (×9)",
+    "2026-11-18T09:12:01.100000000Z Running buildah...",
+    "2026-11-18T09:12:01.200000000Z Error: registries.conf must be in v2 format but is in v1",
+  ];
+  assert.equal(
+    builderError(seen),
+    "Error: registries.conf must be in v2 format but is in v1",
+  );
+  // An error after a step is the Dockerfile's.
+  assert.equal(
+    builderError([
+      "2026-11-18T09:12:01.100000000Z Running buildah...",
+      "2026-11-18T09:12:01.200000000Z STEP 1/2: FROM nginx:nope",
+      "2026-11-18T09:12:02.200000000Z Error: initializing source docker://nginx:nope: manifest unknown",
+    ]),
+    undefined,
+  );
+  assert.equal(builderError(["Running buildah..."]), undefined);
+
+  const f = await platform();
+  const runtime = new DeploymentRuntime(f.engine, 20);
+  try {
+    const r = await runtime.deploy({
+      project_id: P,
+      application_name: "stack",
+      files_uploaded: true,
+      wait_seconds: 0,
+      services: [
+        { name: "web", build: { desk_id: D, dockerfile: "/web/Dockerfile" } },
+      ],
+    });
+    for (const count of [2, 3]) {
+      await eventually(() => f.db.images.length === count);
+      const image = f.db.images.at(-1);
+      f.db.log(image.id, ...seen.slice(1));
+      await eventually(() => f.db.logRequests >= count - 1);
+      await delay(50);
+      image.build_status = "error";
+      f.db.endLog(image.id);
+    }
+    const done = await runtime.get({
+      deployment_id: r.deployment_id,
+      wait_seconds: 5,
+    });
+    assert.equal(done.status, "failed");
+    assert.equal(done.failure.cause, "builder");
+    assert.match(
+      done.message,
+      /Constructor's image builder failed before it ran the Dockerfile \(Error: registries\.conf must be in v2 format but is in v1\)\. This is not a problem in the Dockerfile/,
+    );
+    assert.doesNotMatch(done.message, /Fix the Dockerfile/);
+  } finally {
+    await runtime.close();
     await f.close();
   }
 });
