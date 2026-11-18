@@ -210,7 +210,11 @@ const deploymentShape = {
     .describe(
       "Desk link from the user: sets project_id and the desk for builds without desk_id.",
     ),
-  project_name: name.optional(),
+  project_name: name
+    .optional()
+    .describe(
+      "Only when the user named no project or desk: a short name (one to three words, from the app) for a NEW project. The MCP creates it, switches deployment on and deploys there; tell the user. Ignored when a project or desk is given.",
+    ),
   application_name: name.optional(),
   services: z.array(serviceInput).min(1).optional(),
   files_uploaded: z.boolean().default(false),

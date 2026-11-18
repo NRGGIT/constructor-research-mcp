@@ -76,6 +76,10 @@ lock file in it. That is the whole coordination model.
 
 1. `api.refresh()` re-reads the key file.
 2. `desk_url` (or, inside a desk, the desk itself) becomes `project_id` / `desk_id`.
+   With no target at all, `deploy_app` returns `no_target` unless the agent passes
+   `project_name`; then `engine.createProject` creates the project (idempotent through
+   `created-projects.json`, which records each creation before and after the request),
+   waits until it is active and switches deployment on.
 3. For `deploy_app` / `update_app`, services given as `image` (a registry reference) are
    resolved: an image the project already has (same reference, short form, name or ID) is
    reused; any other is added to the project as an **external image**

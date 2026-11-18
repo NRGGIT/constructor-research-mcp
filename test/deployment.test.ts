@@ -39,14 +39,18 @@ test("deploy reuses images, selects default hardware, starts and checks the publ
   }
 });
 
-test("new project creates disk and pauses for upload; checkpoint resumes in a new engine without duplicates", async () => {
+test("a new project gets a disk and pauses for upload; checkpoint resumes in a new engine without duplicates", async () => {
   const f = await platform();
   try {
     f.db.projects = [];
     f.db.desks = [];
+    // A deployment without a target gets its project first (deploy_app with project_name).
+    const project = await f.engine.createProject("new app", "new-app");
+    assert.equal(project.created, true);
     let r = await finish(
       f.engine,
       await f.engine.deploy({
+        project_id: project.id,
         application_name: "new-app",
         services: [
           {

@@ -132,6 +132,32 @@ export class StateStore {
     });
     await rename(tmp, target);
   }
+  /** Projects this MCP created for deployments without a target, by request key. */
+  async created(): Promise<
+    Record<string, { name: string; at: number; project_id?: string }>
+  > {
+    try {
+      const data = JSON.parse(
+        await readFile(
+          join(this.config.stateDir, "created-projects.json"),
+          "utf8",
+        ),
+      );
+      return data && typeof data === "object" ? data : {};
+    } catch {
+      return {};
+    }
+  }
+  async saveCreated(ledger: Record<string, unknown>) {
+    await this.init();
+    const target = join(this.config.stateDir, "created-projects.json"),
+      tmp = target + "." + randomUUID() + ".tmp";
+    await writeFile(tmp, JSON.stringify(ledger, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
+    await rename(tmp, target);
+  }
   async exclusive<T>(fn: () => Promise<T>): Promise<T> {
     await this.init();
     const lock = join(this.config.stateDir, ".lock");

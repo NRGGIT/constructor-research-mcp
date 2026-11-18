@@ -1,6 +1,6 @@
 # Constructor Research MCP
 
-> **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list.
+> **0.6.3:** with no project or desk named (and not inside a desk), `deploy_app` creates a new project from a short `project_name` and deploys there. `delete_resources` deletes applications, services and images, after the user approves the list.
 >
 > **0.6.2:** a ready-made image works on a project with deployment off (it is switched on first); logs keep 2000 lines per build or service for 14 days, services are followed for two hours, and `watched` says when.
 >
@@ -115,13 +115,21 @@ No special clone/new-instance workflow is implemented. The fourteen tools use th
 
 ## Where to act: the desk link
 
-The agent does not choose a project or desk. It asks the user for the desk link: open the desk in Constructor and copy the browser address, for example
+The agent never picks an existing project itself. It uses the project or desk the user named (now or earlier in the conversation); inside a Constructor desk, that desk is the default. The desk link is the browser address of a desk, for example
 
 ```text
 https://constructor.app/research/projects/<project_id>/desks/<desk_id>/viewer/file
 ```
 
 Every tool accepts it as `desk_url`, in place of `project_id`/`desk_id`. Anything after `/desks/<desk_id>` is ignored. The link's host must be the Constructor the key belongs to (inside a desk, the desk's server too); a link from another one returns `wrong_environment` (see the access key above). Explicit IDs, if also sent, must agree with the link. In `deploy_app`/`update_app`, builds without their own `desk_id` use the link's desk; `start_app`/`stop_app` and `get_deployment` take only the project from it.
+
+**No target at all** (no `desk_url` or `project_id`, and not inside a desk): `deploy_app` returns `no_target`, telling the agent not to ask but to repeat the call with `project_name`, a short name (one to three words) taken from the app, and to tell the user. With `project_name` the MCP then:
+
+- creates the project (`POST /projects`, description "Created by the Constructor Research MCP for <app>"); a name already taken gets a number (`todo 2`);
+- waits until it is active and switches deployment on;
+- deploys there as usual (sources go to the project's desk, registry images are added as external images), and the result message carries the project's link.
+
+The same request again (same `project_name` and `application_name` within a day) reuses that project instead of creating another: `created-projects.json` in the state directory records each creation before and after the request, so even an interrupted one is adopted. `project_name` is ignored when a project or desk is given.
 
 Given only `project_id`, the MCP finds the desk itself:
 
@@ -211,7 +219,7 @@ With `image`, the MCP first looks for it in the project (by `reference` or name)
 ## Missing prerequisites
 
 - **No or rejected key:** `needs_key` with the command to save one (see Access key). Save a valid key, then check the same deployment again.
-- **No project/disk:** omit `project_id`, optionally supply `project_name`, and use build sources without disk IDs. MCP creates the project/disk and enables deployment tools.
+- **No project/disk:** omit `project_id` and pass `project_name`; the MCP creates the project, switches deployment on and uses or creates its desk (see "Where to act").
 - **Files absent:** `needs_upload` lists disks and Dockerfile paths. Upload with `sync_files` (or manually), then call `get_deployment` with `deployment_id` and `files_uploaded:true`.
 
 Before any build, the MCP reads each Dockerfile from its disk. A missing one returns `dockerfile_missing` and nothing is created. When every build's Dockerfile is present, the upload pause is skipped. The MCP also returns `dockerfile_warnings` (in `message` too) for: a name other than `Dockerfile`/`<name>.dockerfile`, no `FROM`, no `EXPOSE` or a service port that is not exposed, `localhost`/`127.0.0.1` in `ENV`/`ARG`/`CMD`/`ENTRYPOINT`, a docker-compose file next to the Dockerfile, compose-style default hosts in `ENV` (`http://cerbos:3592`, `temporal:7233`), an `ENTRYPOINT`/`CMD` script copied from the build context with no `chmod` (files uploaded to a desk lose the executable bit, so such a container exits before printing anything), and `listen [::]` in an nginx `.conf`/`.template` the Dockerfile copies (nginx exits where the cluster has no IPv6). The same rules are in the tool descriptions, so agents see them before writing a Dockerfile. An existing project with a conflicting name requires an explicit ID; the MCP does not guess.

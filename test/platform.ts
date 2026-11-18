@@ -130,11 +130,15 @@ export async function platform() {
     if (path === "/projects" && req.method === "GET")
       return send({ results: db.projects, total: db.projects.length });
     if (path === "/projects" && req.method === "POST") {
+      db.projectCreates = (db.projectCreates ?? 0) + 1;
       const p = {
         id: P,
         name: body.name,
+        description: body.description,
         deployment_enabled: false,
-        status: "active",
+        // A new project is briefly not active, as on Constructor.
+        status: db.newProjectStatus ?? "active",
+        created_at: new Date().toISOString(),
       };
       db.projects.push(p);
       return send(p);
@@ -145,15 +149,19 @@ export async function platform() {
       // Only the project owner may switch deployment on.
       if (db.denyEnable)
         return send({ details: { msg: "SECRET", error_code: 40005 } }, 421);
-      db.projects[0].deployment_enabled = body.enabled;
-      return send(db.projects[0]);
+      db.projects.find((p: any) => p.id === P).deployment_enabled =
+        body.enabled;
+      return send(db.projects.find((p: any) => p.id === P));
     }
     if (path === `/projects/${P}` && req.method === "PATCH") {
       // Like the public API: a key may not switch on deployment (yet).
       if (db.denyEnable && "deployment_enabled" in (body ?? {}))
         return send({ details: { msg: "SECRET", error_code: 20005 } }, 403);
-      Object.assign(db.projects[0], body);
-      return send(db.projects[0]);
+      Object.assign(
+        db.projects.find((p: any) => p.id === P),
+        body,
+      );
+      return send(db.projects.find((p: any) => p.id === P));
     }
     if (path === `/projects/${P}/hardware-configurations`)
       return send({
@@ -212,7 +220,7 @@ export async function platform() {
       // An older Constructor has no such endpoint.
       if (db.noExternal) return send({ detail: "Not Found" }, 404);
       // Like Constructor: only a project with deployment on takes external images.
-      if (!db.projects[0].deployment_enabled)
+      if (!db.projects.find((p: any) => p.id === P).deployment_enabled)
         return send(
           {
             detail: {

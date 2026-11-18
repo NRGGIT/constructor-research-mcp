@@ -1223,6 +1223,83 @@ export class DeploymentEngine {
       return this.view(op);
     }
   }
+  /**
+   * Creates a project for a deployment that has no target (no project or desk named, not
+   * running inside a desk), switches deployment on and returns it. Repeating the same
+   * request (same name and application within a day) returns the same project: a ledger in
+   * the state directory records the creation before and after the request, so a crash in
+   * between adopts the project instead of creating a second one. A name already taken by
+   * another project gets a number ("todo 2").
+   */
+  async createProject(name: string, application?: string) {
+    const wanted = name.trim().replace(/\s+/g, " ");
+    const key = createHash("sha256")
+      .update(`${this.store.endpoint}|${wanted}|${application ?? ""}`)
+      .digest("hex");
+    const link = (id: string) =>
+      `${this.api.config.baseUrl}/research/projects/${id}`;
+    const found = await this.store.exclusive(async () => {
+      const ledger = await this.store.created();
+      const day = 24 * 60 * 60 * 1000;
+      for (const k of Object.keys(ledger))
+        if (Date.now() - ledger[k].at > day) delete ledger[k];
+      const seen = ledger[key];
+      const all = await this.rows("/projects");
+      if (seen) {
+        // Created before, or interrupted after asking Constructor: adopt that project.
+        const mine = seen.project_id
+          ? all.find((p) => p.id === seen.project_id)
+          : all.find(
+              (p) =>
+                p.name === seen.name &&
+                Date.parse(p.created_at ?? "") >= seen.at - 60000,
+            );
+        if (mine && !mine.archived) {
+          ledger[key] = { ...seen, project_id: mine.id };
+          await this.store.saveCreated(ledger);
+          return { project: mine, created: false };
+        }
+      }
+      const taken = new Set(all.map((p) => p.name));
+      let unique = wanted;
+      for (let n = 2; taken.has(unique); n++) unique = `${wanted} ${n}`;
+      ledger[key] = { name: unique, at: Date.now() };
+      await this.store.saveCreated(ledger);
+      const project = await this.api.request("POST", "/projects", {
+        name: unique,
+        description: `Created by the Constructor Research MCP${application ? ` for ${application}` : ""}.`,
+      });
+      if (!/^[a-zA-Z0-9_-]{4,128}$/.test(project?.id ?? ""))
+        throw new ToolError(
+          "uncertain_outcome",
+          "Creating the project returned no project ID. Check the user's projects (get_deployment) before trying again.",
+        );
+      ledger[key] = {
+        name: unique,
+        at: ledger[key].at,
+        project_id: project.id,
+      };
+      await this.store.saveCreated(ledger);
+      return { project, created: true };
+    });
+    // A new project may take a moment to become active.
+    let project = found.project;
+    for (
+      let i = 0;
+      i < 20 && project.status && project.status !== "active";
+      i++
+    ) {
+      await delay(1000);
+      project = await this.project(project.id);
+    }
+    await this.ensureDeployment(project.id, project.deployment_enabled);
+    return {
+      id: project.id as string,
+      name: project.name as string,
+      url: link(project.id),
+      created: found.created,
+    };
+  }
   /** Switches on deployment; when the key may not, the operation stops with what to do instead. */
   private async enableDeployment(op: Operation, project: string) {
     try {
@@ -1343,35 +1420,11 @@ export class DeploymentEngine {
   }
   private async advanceApp(op: Operation): Promise<any> {
     const input = op.input;
-    // For a new project all sources must be builds; image IDs are project-scoped.
-    if (!op.project_id) {
-      if (
-        input.services.some(
-          (s: ServiceInput) => !s.build || s.build.desk_id || s.service_id,
-        )
-      )
-        bad(
-          "A new project requires build sources without existing disk/service IDs.",
-        );
-      const matches = (await this.rows("/projects")).filter(
-        (p) => p.name === (input.project_name ?? input.application_name),
+    // A new project is created before the operation (createProject), so one is always set.
+    if (!op.project_id)
+      bad(
+        "No project: pass desk_url or project_id, or project_name to create a new project.",
       );
-      if (matches.length)
-        bad(
-          "A project with this name exists. Discover its ID with get_deployment before proceeding.",
-        );
-      await this.mutate(
-        op,
-        "POST",
-        "/projects",
-        { name: input.project_name ?? input.application_name },
-        (p) => {
-          op.project_id = p.id;
-          op.status = "preparing";
-        },
-      );
-      return this.view(op);
-    }
     const project = await this.project(op.project_id);
     if (project.status && project.status !== "active")
       throw new ToolError(

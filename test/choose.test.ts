@@ -323,3 +323,124 @@ test("the wait hook is added once, keeping other settings", async () => {
   assert.equal(c.model, "x");
   assert.equal(c.hooks.PostToolUse[0].hooks[0].asyncRewake, true);
 });
+
+test("no target: the agent is told to name a new project; with project_name the MCP creates it, switches deployment on and deploys there", async () => {
+  const f = await platform();
+  // The user has one unrelated project, already named like the app.
+  f.db.projects = [
+    {
+      id: "oldp1111",
+      name: "todo",
+      deployment_enabled: true,
+      status: "active",
+    },
+  ];
+  f.db.desks = [];
+  const client = await connect(f);
+  const deploy = (extra: any) =>
+    client.callTool({
+      name: "deploy_app",
+      arguments: {
+        application_name: "todo",
+        wait_seconds: 0,
+        services: [
+          {
+            name: "web",
+            image: "nginx:1.27",
+            ports: [{ number: 80, expose_to_internet: true }],
+          },
+        ],
+        ...extra,
+      },
+    }) as Promise<any>;
+  try {
+    const none = await deploy({});
+    assert.equal(none.structuredContent.status, "no_target");
+    assert.match(
+      none.structuredContent.message,
+      /repeat the same call with project_name/,
+    );
+    assert.equal(f.db.projectCreates ?? 0, 0);
+    assert.match(
+      client.getInstructions() ?? "",
+      /When the user named none, do not ask: call deploy_app with project_name/,
+    );
+
+    const r = await deploy({ project_name: "todo", request_id: "todo-first" });
+    assert.equal(r.isError, undefined, JSON.stringify(r.structuredContent));
+    // The name was taken, so the new project is "todo 2"; deployment is on before the image is added.
+    const created = f.db.projects.find((p: any) => p.id === P);
+    assert.equal(created.name, "todo 2");
+    assert.match(created.description, /Constructor Research MCP for todo/);
+    assert.equal(created.deployment_enabled, true);
+    assert.match(
+      r.structuredContent.message,
+      new RegExp(
+        `Created a new Constructor project "todo 2".*/research/projects/${P}`,
+      ),
+    );
+    const paths = f.db.mutations.map((m: any) => m.path);
+    assert.deepEqual(paths.slice(0, 3), [
+      "/projects",
+      `/projects/${P}/deployment`,
+      `/projects/${P}/images/external`,
+    ]);
+    await until(
+      () => f.db.applications.some((a: any) => a.name === "todo"),
+      "the application was not created in the new project",
+    );
+
+    // The same request again: no second project.
+    const again = await deploy({
+      project_name: "todo",
+      request_id: "todo-first",
+    });
+    assert.equal(
+      again.isError,
+      undefined,
+      JSON.stringify(again.structuredContent),
+    );
+    assert.equal(f.db.projectCreates, 1);
+    assert.match(
+      again.structuredContent.message,
+      /created for this app earlier/,
+    );
+  } finally {
+    await client.close();
+    await f.close();
+  }
+});
+
+test("createProject adopts a project whose creation was interrupted, and waits for a new project to become active", async () => {
+  const f = await platform();
+  try {
+    f.db.projects = [];
+    // Crash after asking Constructor, before the ledger recorded the ID.
+    await f.store.saveCreated({});
+    const first = await f.engine.createProject("notes", "notes");
+    assert.equal(first.created, true);
+    const ledger = await f.store.created();
+    const [key] = Object.keys(ledger);
+    delete ledger[key].project_id;
+    await f.store.saveCreated(ledger);
+    const adopted = await f.engine.createProject("notes", "notes");
+    assert.deepEqual([adopted.id, adopted.created], [P, false]);
+    assert.equal(f.db.projectCreates, 1);
+
+    // A project that is briefly not active is waited for.
+    f.db.projects = [];
+    f.db.newProjectStatus = "creating";
+    setTimeout(() => {
+      const p = f.db.projects.find((x: any) => x.id === P);
+      if (p) p.status = "active";
+    }, 1200);
+    const later = await f.engine.createProject("other", "other");
+    assert.equal(later.created, true);
+    assert.equal(
+      f.db.projects.find((x: any) => x.id === P).deployment_enabled,
+      true,
+    );
+  } finally {
+    await f.close();
+  }
+});

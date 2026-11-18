@@ -79,6 +79,25 @@ async function main() {
     notes: string[],
   ) => {
     const begun = Date.now();
+    // No target anywhere: a new project, named by the agent, or a clear ask for that name.
+    if (!single && !a.project_id && !a.deployment_id && a.services) {
+      if (!a.project_name?.trim())
+        throw new ToolError(
+          "no_target",
+          "No target for this deployment: no desk_url or project_id, and this MCP does not run inside a Constructor desk. If the user named a project or desk earlier in the conversation, pass it. Otherwise do not ask: repeat the same call with project_name, a short name (one to three words, from the app) for a new project, and tell the user that a new Constructor project with that name is created for the app.",
+        );
+      const p = await engine.createProject(a.project_name, a.application_name);
+      notes.push(
+        p.created
+          ? `Created a new Constructor project "${p.name}" for this app, with deployment on: ${p.url}. Tell the user.`
+          : `Deploying to the project "${p.name}" this MCP created for this app earlier: ${p.url}.`,
+      );
+      const { project_name: _n, ...rest } = a;
+      a = { ...rest, project_id: p.id };
+    } else if (!single && a.project_name && a.project_id) {
+      const { project_name: _n, ...rest } = a;
+      a = rest;
+    }
     if (!single && a.project_id && a.services) {
       // Images the project has (by reference or name) are used as they are. Any other
       // registry image is added to the project as an external image: no desk, no build.
@@ -285,7 +304,7 @@ async function main() {
   const withDesk = (text: string) =>
     config.localDesk
       ? text.replace(
-          /Where to act: ask the user for the Constructor desk link.*?if the user has not said where to deploy or where files live, ask\. /,
+          /Where to act: use the project or desk the user named.*?is created for the app\. /,
           deskInstructions(config.localDesk) + " ",
         )
       : text;
@@ -293,7 +312,7 @@ async function main() {
     { name: "constructor-research", version: VERSION },
     {
       instructions: withDesk(
-        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Never read the key file or call Constructor's API yourself (curl, scripts): everything goes through these tools, and if they cannot do something, tell the user. Where to act: ask the user for the Constructor desk link (they open the desk in the browser and copy the address; it contains /projects/<project>/desks/<desk>) and pass it as desk_url. Do not pick a project yourself; if the user has not said where to deploy or where files live, ask. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. A service can also take image: a public registry reference (repo:tag) that runs unchanged. The MCP uses the copy in the project when there is one (list_images shows source and reference), otherwise adds it to the project as an external image, with no desk and no build; if Constructor refuses it (image_refused), tell the user the reason. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, run the wait command that next_action names (with a shell), or call get_deployment(wait_seconds=45) again until it is finished; never perform the deployment steps yourself. Never end the turn while a deployment the user asked for is still running. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. To remove applications, services or images, use delete_resources (it asks the user first). For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
+        `Access: the MCP works with one Constructor and the user's personal access key for it, set up outside the chat. When a tool returns needs_key, pass its instructions on to the user; never ask for the key in the chat. Never read the key file or call Constructor's API yourself (curl, scripts): everything goes through these tools, and if they cannot do something, tell the user. Where to act: use the project or desk the user named, now or earlier in the conversation; a desk link (the browser address of a desk, with /projects/<project>/desks/<desk>) goes in desk_url. Do not pick an existing project yourself. When the user named none, do not ask: call deploy_app with project_name, a short name (one to three words, from the app), and the MCP creates a new project with deployment on; tell the user a new Constructor project with that name is created for the app. Given a project only (project_id), the MCP uses its only desk, or creates one for a deploy when there is none; when the project has several desks it returns desk_choice_required with their names and links: ask the user which one. Ask the user only before replacing, renaming or deleting files on a disk, once per request for the whole list (the tools return confirm_required); creating folders and uploading new files need no question. ${RULES} For a local app, pass build.local_path (the folder with the Dockerfile) and deploy_app uploads it first. A service can also take image: a public registry reference (repo:tag) that runs unchanged. The MCP uses the copy in the project when there is one (list_images shows source and reference), otherwise adds it to the project as an external image, with no desk and no build; if Constructor refuses it (image_refused), tell the user the reason. Hardware: leave it out; the default is used. Set hardware minimums only when the app cannot run without a GPU or a lot of RAM. Use deploy_app/update_app once for the WHOLE application. The MCP builds, resolves service URLs, configures and starts services in the background. IDs are automatic. To wait, run the wait command that next_action names (with a shell), or call get_deployment(wait_seconds=45) again until it is finished; never perform the deployment steps yourself. Never end the turn while a deployment the user asked for is still running. When the user asks to deploy or build, wait until the deployment is finished before answering, then give the public URL or what failed. On failure, tell the user the failed stage/service; failure.log_tail and get_logs show the last build or service log lines. Do not use browser or debugging tools. To remove applications, services or images, use delete_resources (it asks the user first). For source files: sync_files to the desk before building (the MCP checks each Dockerfile on the disk and reports warnings); after a needs_upload pause, sync and call get_deployment with files_uploaded=true. Started is not readiness.`,
       ),
     },
   );
