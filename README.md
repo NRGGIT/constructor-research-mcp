@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **0.6.2:** a ready-made image works on a project with deployment off (it is switched on first); logs keep 2000 lines per build or service for 14 days, services are followed for two hours, and `watched` says when.
+>
 > **0.6.1:** inside a Constructor desk, a key saved for your Constructor works even when the desk names another address for it (`ROLOS_API_SERVER`, e.g. `constructor.app` in a desk opened on `acme.constructor.app`).
 >
 > **0.6:** a registry `image` the project does not have is added to it as an external image, with no desk and no build; Constructor refuses a bad one at once, with its reason.
@@ -97,7 +99,7 @@ When the MCP runs in VS Code inside a Constructor Research desk, it finds that d
 | `update_app`             | Describe selected changes/additions; the MCP builds and restarts affected services. |
 | `start_app` / `stop_app` | Request lifecycle changes for all or selected services.                             |
 | `get_deployment`         | Map all deployments, inspect a project or app, or wait for background execution.    |
-| `get_logs`               | Last 10–50 lines of a build or service log (see "Logs").                            |
+| `get_logs`               | Last 10–500 lines of a build or service log (see "Logs").                           |
 | `build_image`            | Build an image independently when needed.                                           |
 | `list_images`            | List image IDs, Dockerfiles and native build statuses.                              |
 | `list_files`             | List a disk's files and folders; `recursive:true` walks subfolders.                 |
@@ -262,15 +264,15 @@ For `needs_reconciliation`, inspect the possible remote mutation before submitti
 
 ## Logs
 
-Constructor serves logs only live, as a stream: a build log while the build runs, a service log for the service's current container. Each connection replays the log from the start, then streams. Nothing is kept afterwards: a finished build has no log, and a restarted container starts with an empty one, so a crash-looping service shows no log at all. The MCP therefore follows every build and service it starts and keeps only the last 50 lines of each, in memory and in `logs/` in the state directory, so it stays small however long the log is.
+Constructor serves logs only live, as a stream: a build log while the build runs, a service log for the service's current container. Each connection replays the log from the start, then streams. Nothing is kept afterwards: a finished build has no log, and a restarted container starts with an empty one, so a crash-looping service shows no log at all. The MCP therefore follows every build and service it starts and keeps the last 2000 lines of each in `logs/` in the state directory, where other MCP processes, the wait command and a restarted agent read them too. Files untouched for 14 days are deleted, and the oldest go first when all of them pass 100 MB.
 
 - A build is followed from its first status check until it ends; a dropped connection is reopened and replayed lines are skipped. When the stream closes, reopening it answers "not found" and the kept lines are final.
-- A service is followed from its start request, or from when `get_deployment` shows it running, for 15 minutes after anyone last asked for it.
+- A service is followed from its start request, or from when `get_deployment` shows it running, for two hours after anyone last asked for it. `watched` lists when the MCP followed it: a container that started and stopped outside those periods, or while no agent or wait command was running, left no lines, because Constructor keeps none.
 - Restarts: Constructor reports no restart count, so the MCP detects them in the stream. When a new container starts (the platform's "Container is waiting to start" line after the container's own lines, or a reconnect that begins with newer lines than were kept), it inserts `--- new container (restart N) ---` and keeps the old container's last lines above it, which usually show why it stopped. `get_logs` and the services in `get_deployment` report `restarts_seen` and `restarted_at`.
 - `get_deployment` services also carry `status_changes`: the native statuses this MCP process saw, with times, once a service has had more than one.
 - Lines that are only a timestamp are dropped, and identical consecutive lines are collapsed into one with a count (`(×5)`).
 - A failed build or start puts the last 20 lines into `failure.log_tail`.
-- `get_logs` takes `image_id`, `service_id` or `deployment_id` (all its builds and services) and `lines` (10–50, default 20). It also reads builds and services this MCP did not start, but only while they run.
+- `get_logs` takes `image_id`, `service_id` or `deployment_id` (all its builds and services) and `lines` (10–500, default 20). It also reads builds and services this MCP did not start, but only while they run.
 
 ## Waiting for long builds
 

@@ -211,6 +211,18 @@ export async function platform() {
     if (path === `/projects/${P}/images/external` && req.method === "POST") {
       // An older Constructor has no such endpoint.
       if (db.noExternal) return send({ detail: "Not Found" }, 404);
+      // Like Constructor: only a project with deployment on takes external images.
+      if (!db.projects[0].deployment_enabled)
+        return send(
+          {
+            detail: {
+              msg: "Invalid parameters",
+              error_code: 10001,
+              info: { details: "Deployment is not enabled" },
+            },
+          },
+          421,
+        );
       const ref = body.reference;
       const refused = /^docker\.io\//.test(ref)
         ? `Registry docker.io returned an unexpected manifest.`

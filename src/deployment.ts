@@ -178,6 +178,17 @@ function hardwareOptions(hardware: any[]) {
     );
 }
 
+/** Only the project owner may switch deployment on (421, error 40005; older servers 403). */
+function ownerOnly(err: unknown) {
+  if (err instanceof ToolError && (err.apiCode === 40005 || err.status === 403))
+    return new ToolError(
+      "deployment_disabled",
+      "Deployment is switched off for this project, and only the project owner can switch it on. Ask the project owner to switch on deployment for the project in Constructor, then repeat the same call.",
+      err.status,
+      err.apiCode,
+    );
+  return err;
+}
 export class DeploymentEngine {
   /** Set by the server so a build retry can re-check and re-upload its sources. */
   files?: FileManager;
@@ -317,7 +328,7 @@ export class DeploymentEngine {
     if (log) op.failure.log_tail = log.lines;
     op.message = `Image build${service ? ` for ${service}` : ""} failed${first ? ` twice (${first}, then ${image.name} after re-checking the files)` : ` (${image.name})`}. ${
       log
-        ? "The last build log lines are in failure.log_tail (get_logs with the image ID shows up to 50)."
+        ? "The last build log lines are in failure.log_tail (get_logs with the image ID shows up to 500)."
         : `No build log was captured. To see the error, open the desk (${link}), rebuild ${dockerfile} from the UI and watch the live log.`
     } Fix the Dockerfile or source, then deploy again.`;
   }
@@ -500,7 +511,12 @@ export class DeploymentEngine {
    * non-amd64 or malformed image with its reason. Undefined when this Constructor
    * has no such endpoint yet (the caller then builds it from FROM).
    */
-  async registerExternal(project: string, service: string, reference: string) {
+  async registerExternal(
+    project: string,
+    service: string,
+    reference: string,
+    retried = false,
+  ): Promise<any> {
     try {
       return await this.api.request(
         "POST",
@@ -510,6 +526,12 @@ export class DeploymentEngine {
     } catch (err) {
       if (!(err instanceof ToolError) || err.code !== "api_error") throw err;
       if (err.status === 404 || err.status === 405) return undefined;
+      // The project's deployment is off (switched off meanwhile, or the caller did not
+      // check): switch it on and ask once more.
+      if (!retried && /deployment is not enabled/i.test(err.reason ?? "")) {
+        await this.ensureDeployment(project, false);
+        return this.registerExternal(project, service, reference, true);
+      }
       if ([400, 421, 422].includes(err.status ?? 0)) {
         const why = cleanReason(err.reason);
         throw new ToolError(
@@ -966,7 +988,7 @@ export class DeploymentEngine {
         const log = id && (await this.logs?.peek(id, "service", 20));
         if (log) {
           op.failure = { ...op.failure, log_tail: log.lines };
-          op.message = `${op.failure.stage} failed for ${op.failure.service}. The last service log lines are in failure.log_tail (get_logs with the service ID shows up to 50).`;
+          op.message = `${op.failure.stage} failed for ${op.failure.service}. The last service log lines are in failure.log_tail (get_logs with the service ID shows up to 500).`;
         }
       }
       await this.store.save(op);
@@ -986,18 +1008,22 @@ export class DeploymentEngine {
         },
       );
     } catch (err) {
-      // Only the project owner may switch it on (421, error 40005); older servers answer 403.
-      if (
-        err instanceof ToolError &&
-        (err.apiCode === 40005 || err.status === 403)
-      )
-        throw new ToolError(
-          "deployment_disabled",
-          "Deployment is switched off for this project, and only the project owner can switch it on. Ask the project owner to switch on deployment for the project in Constructor, then repeat the same call.",
-          err.status,
-          err.apiCode,
-        );
-      throw err;
+      throw ownerOnly(err);
+    }
+  }
+  /**
+   * Switches on deployment for a project that has it off, before anything else is added to
+   * it: Constructor adds an external image only to a project with deployment on. Switching
+   * it on twice is harmless, so this runs outside a saved operation.
+   */
+  async ensureDeployment(project: string, known?: boolean) {
+    if (known ?? (await this.project(project)).deployment_enabled) return;
+    try {
+      await this.api.request("POST", this.root(project) + "/deployment", {
+        enabled: true,
+      });
+    } catch (err) {
+      throw ownerOnly(err);
     }
   }
   private async advanceBuild(op: Operation) {

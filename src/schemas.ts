@@ -291,9 +291,11 @@ export const logsInput = z
       .number()
       .int()
       .min(10)
-      .max(50)
+      .max(500)
       .default(20)
-      .describe("How many of the last log lines to return."),
+      .describe(
+        "How many of the last log lines to return (up to 500; the MCP keeps 2000 per log).",
+      ),
   })
   .refine(
     (x) =>

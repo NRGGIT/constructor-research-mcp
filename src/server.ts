@@ -82,10 +82,17 @@ async function main() {
       // registry image is added to the project as an external image: no desk, no build.
       const added = new Map<string, any>();
       let services: any[] = [];
+      let switchedOn = false;
       for (const x of await engine.resolveImages(a.project_id, a.services)) {
         if (!x.image) {
           services.push(x);
           continue;
+        }
+        // Constructor adds external images only to a project with deployment on, which the
+        // deployment itself would switch on only later.
+        if (!switchedOn) {
+          await engine.ensureDeployment(a.project_id);
+          switchedOn = true;
         }
         if (!/^[a-z0-9][a-z0-9._/:@-]*$/i.test(x.image))
           throw new ToolError(
@@ -501,7 +508,7 @@ async function main() {
   );
   register(
     "get_logs",
-    "Last lines (default 20, up to 50) of a build or service log: why a build or start failed, how far a long build got, what a starting service prints. Constructor serves logs only live: a build log while the build runs, a service log for its current container while it runs (both replayed from the start, then streamed). The MCP follows the builds and services it starts or shows and keeps their last 50 lines, so they stay readable after the build ends or the container restarts; anything else can be read only while it runs. When a new container starts, the lines of the one before stay, above a '--- new container' marker, and restarts_seen counts them: that answers whether a service keeps restarting and why. An empty service log on a running service usually means a crash loop.",
+    "Last lines (default 20, up to 500) of a build or service log: why a build or start failed, how far a long build got, what a starting service prints. Constructor serves logs only live: a build log while the build runs, a service log for its current container while it runs (both replayed from the start, then streamed). The MCP follows the builds it starts until they end, and the services it starts or shows for two hours after that (or after the last get_logs), and keeps their last 2000 lines on this machine for 14 days, so they stay readable after the build ends, the container restarts or the agent restarts; watched says when it followed. Anything else can be read only while it runs. When a new container starts, the lines of the one before stay, above a '--- new container' marker, and restarts_seen counts them: that answers whether a service keeps restarting and why. An empty service log on a running service usually means a crash loop.",
     logsInput,
     async (a) => {
       const i = logsInput.parse(a);

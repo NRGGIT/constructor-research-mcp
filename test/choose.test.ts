@@ -241,6 +241,61 @@ test("image: the project's copy is used; any other registry image is added as an
   }
 });
 
+test("image on a project with deployment off: deployment is switched on before the image is added", async () => {
+  const f = await platform();
+  f.db.projects[0].deployment_enabled = false;
+  const client = await connect(f);
+  const deploy = (application_name: string) =>
+    client.callTool({
+      name: "deploy_app",
+      arguments: {
+        project_id: P,
+        application_name,
+        wait_seconds: 0,
+        services: [
+          {
+            name: "web",
+            image: "nginx:1.27",
+            ports: [{ number: 80, expose_to_internet: true }],
+          },
+        ],
+      },
+    }) as Promise<any>;
+  try {
+    // Only the owner may switch it on: the tool says so, and nothing is added.
+    f.db.denyEnable = true;
+    const denied = await deploy("denied");
+    assert.equal(denied.structuredContent.status, "deployment_disabled");
+    assert.ok(!f.db.images.some((x: any) => x.source === "external"));
+
+    f.db.denyEnable = false;
+    const r = await deploy("on");
+    assert.equal(r.isError, undefined, JSON.stringify(r.structuredContent));
+    const paths = f.db.mutations.map((m: any) => m.path);
+    const on = paths.indexOf(`/projects/${P}/deployment`);
+    const added = paths.indexOf(`/projects/${P}/images/external`);
+    assert.ok(on >= 0 && added > on, paths.join(" "));
+    assert.equal(f.db.projects[0].deployment_enabled, true);
+    await until(
+      () =>
+        f.db.applications.some((a: any) =>
+          a.services?.some((s: any) => /^external/.test(s.image_id ?? "")),
+        ),
+      "service with the external image was not created",
+    );
+
+    // Switched off again behind the MCP's back between its check and the request: one retry.
+    f.db.applications.length = 0;
+    const engine = f.engine as any;
+    f.db.projects[0].deployment_enabled = false;
+    const im = await engine.registerExternal(P, "web", "redis:7");
+    assert.equal(im.reference, "redis:7");
+  } finally {
+    await client.close();
+    await f.close();
+  }
+});
+
 test("the wait hook is added once, keeping other settings", async () => {
   const { installHook } = await import("../src/wait.js");
   const { mkdtemp, readFile, writeFile } = await import("node:fs/promises");

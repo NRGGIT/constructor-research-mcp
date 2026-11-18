@@ -20,22 +20,31 @@ test("a build log keeps only its last lines, survives a dropped stream without d
   const f = await platform();
   try {
     const id = "build0001";
-    f.db.log(id, ...Array.from({ length: 120 }, (_, n) => line(n)));
+    const total = KEEP + 120;
+    f.db.log(id, ...Array.from({ length: total }, (_, n) => line(n)));
     let r = await f.logs.tail(id, "build", 20);
     assert.equal(r.state, "live");
     assert.equal(r.lines.length, 20);
-    assert.match(r.lines.at(-1)!, /step 119$/);
+    await eventually(
+      async () =>
+        (await f.logs.peek(id, "build", 1))?.lines[0]?.endsWith(
+          `step ${total - 1}`,
+        ) ?? false,
+    );
 
     f.db.cutLogs(id); // A proxy drops the connection; the build goes on.
     await eventually(() => f.db.logRequests >= 2);
-    f.db.log(id, line(120));
+    f.db.log(id, line(total));
     await eventually(
       async () =>
         (await f.logs.peek(id, "build", 50))?.lines
           .at(-1)
-          ?.endsWith("step 120") ?? false,
+          ?.endsWith(`step ${total}`) ?? false,
     );
     r = (await f.logs.peek(id, "build", 50))!;
+    assert.equal(r.lines.length, 50);
+    assert.match(r.message!, new RegExp(`${KEEP} lines are kept`));
+    r = (await f.logs.peek(id, "build", KEEP))!;
     assert.equal(r.lines.length, KEEP);
     assert.equal(new Set(r.lines).size, KEEP, "replayed lines are skipped");
 
@@ -46,7 +55,7 @@ test("a build log keeps only its last lines, survives a dropped stream without d
     const requests = f.db.logRequests;
     r = await f.logs.tail(id, "build", 10);
     assert.deepEqual([r.state, r.lines.length], ["finished", 10]);
-    assert.match(r.lines.at(-1)!, /step 120$/);
+    assert.match(r.lines.at(-1)!, new RegExp(`step ${total}$`));
     assert.equal(
       f.db.logRequests,
       requests,
@@ -238,6 +247,70 @@ test("a restarted container is marked, counted and keeps the lines of the one be
     await eventually(
       async () => (await f.logs.peek(id, "service", 20))?.restarts_seen === 2,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a service log says when the MCP followed it, and that survives another process", async () => {
+  const f = await platform();
+  try {
+    const id = "svc00003";
+    f.db.log(id, at(10, "Server started on port 8080"));
+    await eventually(
+      async () => (await f.logs.tail(id, "service", 20)).lines.length === 1,
+    );
+    let r = await f.logs.tail(id, "service", 20);
+    assert.equal(r.watched?.length, 1);
+    assert.equal(r.watched![0].to, undefined, "still following");
+    assert.doesNotMatch(r.message!, /left no lines/);
+    // The MCP stops: the period closes, and the view says what it cannot have seen.
+    await f.logs.close();
+    const other = new LogFollower(f.api);
+    r = (await other.peek(id, "service", 20))!;
+    assert.equal(r.watched?.length, 1);
+    assert.ok(r.watched![0].to, "the period ended");
+    assert.match(
+      r.message!,
+      /followed this service's log from .* to .*started and stopped outside that period left no lines/,
+    );
+    await other.close();
+  } finally {
+    await f.close();
+  }
+});
+
+test("kept log files are rotated: old ones go, then the oldest beyond the size limit; followed ones stay", async () => {
+  const f = await platform();
+  const { mkdir, writeFile, utimes, readdir } =
+    await import("node:fs/promises");
+  const { join } = await import("node:path");
+  try {
+    const dir = join(f.config.stateDir, "logs");
+    await mkdir(dir, { recursive: true });
+    const day = 24 * 60 * 60 * 1000;
+    const put = async (name: string, ageDays: number, bytes = 10) => {
+      await writeFile(join(dir, name), "x".repeat(bytes));
+      const t = new Date(Date.now() - ageDays * day);
+      await utimes(join(dir, name), t, t);
+    };
+    await put("build-old00001.json", 20);
+    await put("service-recent01.json", 1, 600);
+    await put("service-recent02.json", 2, 600);
+    await put("build-newest01.json", 0, 600);
+    await put("notes.txt", 30); // not ours: left alone
+    // A log being followed now is never deleted, however old its file looks.
+    f.db.log("svcfollow", at(1, "up"));
+    f.logs.follow("svcfollow", "service");
+    await put("service-svcfollow.json", 30);
+    f.logs.maxBytes = 1300;
+    await f.logs.rotate();
+    assert.deepEqual((await readdir(dir)).sort(), [
+      "build-newest01.json",
+      "notes.txt",
+      "service-recent01.json",
+      "service-svcfollow.json",
+    ]);
   } finally {
     await f.close();
   }

@@ -1,10 +1,21 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { PlatformApi, ToolError, segment } from "./api.js";
 
-/** Lines kept per build; the tool returns up to this many. */
-export const KEEP = 50;
+/** Lines kept per build or service, in memory and in its file. */
+export const KEEP = 2000;
+/** The most lines get_logs returns at once. */
+export const SHOW = 500;
+/** Periods of watching kept per log. */
+const PERIODS = 20;
 /** Longer lines are cut, so one runaway line cannot fill memory. */
 const WIDTH = 1000;
 const ID = /^[a-zA-Z0-9_-]{4,128}$/;
@@ -45,6 +56,13 @@ interface Log {
   error?: string;
   reader?: Promise<void>;
   saved: number;
+  /** When the MCP had this log open; anything printed outside these periods is lost. */
+  watched: Period[];
+}
+/** A stretch of time the MCP followed a log; `to` is missing while it still does. */
+export interface Period {
+  from: string;
+  to?: string;
 }
 export interface LogView {
   kind: LogKind;
@@ -55,12 +73,14 @@ export interface LogView {
   /** New containers seen starting while the MCP followed this service. */
   restarts_seen?: number;
   restarted_at?: string[];
+  /** When the MCP followed this log; lines printed outside these periods were never seen. */
+  watched?: Period[];
   message?: string;
 }
 
 /**
- * Follows build and service log streams and keeps only the last KEEP lines of each, in
- * memory and in a small file in the state directory. The platform serves a build log only
+ * Follows build and service log streams and keeps the last KEEP lines of each, in memory
+ * and in a file in the state directory; old files are deleted (rotate). The platform serves a build log only
  * while the build runs, and every connection replays it from the start, so a dropped
  * stream is reopened and already-seen lines are skipped. When the build ends the stream
  * closes and reopening answers "not found"; the kept lines stay readable. A service log
@@ -77,8 +97,14 @@ export class LogFollower {
   /** How long to follow after the last interest: builds until they end, services briefly. */
   followMs: Record<LogKind, number> = {
     build: 2 * 60 * 60 * 1000,
-    service: 15 * 60 * 1000,
+    service: 2 * 60 * 60 * 1000,
   };
+  /** Kept files older than this are deleted. */
+  retainMs = 14 * 24 * 60 * 60 * 1000;
+  /** Beyond this many bytes of kept files, the oldest are deleted. */
+  maxBytes = 100 * 1024 * 1024;
+  /** When old files were last looked for. */
+  private rotated = 0;
   constructor(
     readonly api: PlatformApi,
     private readonly dir = join(api.config.stateDir, "logs"),
@@ -98,15 +124,20 @@ export class LogFollower {
         restarts: [],
         state: "live",
         saved: 0,
+        watched: [],
       };
       this.logs.set(`${kind}:${id}`, log);
       this.prune();
     }
     log.state = "live";
     log.error = undefined;
+    log.watched.push({ from: new Date().toISOString() });
+    if (log.watched.length > PERIODS) log.watched.shift();
     const current = log;
     current.reader = this.read(id, current).finally(() => {
       current.reader = undefined;
+      const period = current.watched.at(-1);
+      if (period && !period.to) period.to = new Date().toISOString();
       if (current.state === "live")
         current.state = current.lines.length ? "finished" : "unavailable";
       return this.save(id, current, true);
@@ -162,31 +193,48 @@ export class LogFollower {
   private view(id: string, log: Log, count: number): LogView {
     const service = log.kind === "service";
     const restarts = log.restarts.length;
+    const lines = log.lines.slice(-Math.max(1, Math.min(KEEP, count)));
+    const said =
+      log.error ??
+      (restarts
+        ? `The container restarted ${restarts} time${restarts > 1 ? "s" : ""} while the MCP followed it (last at ${log.restarts.at(-1)}). Lines above each "--- new container" marker come from the container before it; its last lines usually show why it stopped.`
+        : undefined) ??
+      (log.state === "unavailable"
+        ? service
+          ? "No log: the service is not running, or its current container has printed nothing (a container that keeps crashing has no current log)."
+          : "No log: the build is not running and this MCP did not follow it while it ran. Constructor serves build logs only during the build."
+        : log.state === "finished"
+          ? service
+            ? "No longer following; these are the last lines kept."
+            : "The build is no longer running; these are the last lines it wrote."
+          : service
+            ? "Following the log of the service's current container. No lines can mean the container keeps restarting (crash loop) or has printed nothing yet."
+            : undefined);
+    // Every connection replays the current container from its start, so only a container
+    // that started and stopped while nobody followed is lost: Constructor keeps no old logs.
+    const gaps =
+      service && log.state !== "live" && log.watched.length
+        ? `The MCP followed this service's log ${log.watched
+            .map((p) => `from ${p.from} to ${p.to ?? "now"}`)
+            .join(
+              ", ",
+            )}. A container that started and stopped outside ${log.watched.length > 1 ? "those periods" : "that period"} left no lines here, because Constructor serves logs only while they are live.`
+        : undefined;
+    const more =
+      log.lines.length > lines.length
+        ? `${log.lines.length} lines are kept; ask for more with lines (up to ${SHOW}).`
+        : undefined;
     return {
       kind: log.kind,
       id,
       state: log.state,
-      lines: log.lines.slice(-Math.max(1, Math.min(KEEP, count))),
+      lines,
       last_received_at: log.received,
       ...(restarts
         ? { restarts_seen: restarts, restarted_at: log.restarts }
         : {}),
-      message:
-        log.error ??
-        (restarts
-          ? `The container restarted ${restarts} time${restarts > 1 ? "s" : ""} while the MCP followed it (last at ${log.restarts.at(-1)}). Lines above each "--- new container" marker come from the container before it; its last lines usually show why it stopped.`
-          : undefined) ??
-        (log.state === "unavailable"
-          ? service
-            ? "No log: the service is not running, or its current container has printed nothing (a container that keeps crashing has no current log)."
-            : "No log: the build is not running and this MCP did not follow it while it ran. Constructor serves build logs only during the build."
-          : log.state === "finished"
-            ? service
-              ? "No longer following; these are the last lines kept."
-              : "The build is no longer running; these are the last lines it wrote."
-            : service
-              ? "Following the log of the service's current container. No lines can mean the container keeps restarting (crash loop) or has printed nothing yet."
-              : undefined),
+      ...(log.watched.length ? { watched: log.watched } : {}),
+      message: [said, gaps, more].filter(Boolean).join(" ") || undefined,
     };
   }
 
@@ -339,9 +387,11 @@ export class LogFollower {
           restarts: log.restarts,
           received: log.received,
           error: log.error,
+          watched: log.watched,
         }),
         { mode: 0o600 },
       );
+      if (Date.now() - this.rotated > 60 * 60 * 1000) await this.rotate();
     } catch {
       /* Logs are a convenience; never fail a deployment over them. */
     }
@@ -363,7 +413,13 @@ export class LogFollower {
         received: kept.received,
         error: kept.error,
         saved: 0,
+        watched: Array.isArray(kept.watched)
+          ? kept.watched.filter((p: any) => typeof p?.from === "string")
+          : [],
       };
+      // A period another process left open ended when it last wrote the file, at the latest.
+      const open = log.watched.at(-1);
+      if (open && !open.to) open.to = log.received ?? open.from;
       this.logs.set(`${kind}:${id}`, log);
       return log;
     } catch {
@@ -371,11 +427,47 @@ export class LogFollower {
     }
   }
 
-  /** Forget the oldest finished builds; their files remain. */
+  /** Forget the oldest finished logs; their files remain. */
   private prune() {
     for (const [id, log] of this.logs) {
-      if (this.logs.size <= 100) return;
+      if (this.logs.size <= 30) return;
       if (!log.reader) this.logs.delete(id);
+    }
+  }
+
+  /**
+   * Deletes kept files older than retainMs, then the oldest until all of them fit in
+   * maxBytes. Logs being followed now are never deleted. Runs at most hourly, on save.
+   */
+  async rotate() {
+    this.rotated = Date.now();
+    try {
+      const live = new Set(
+        [...this.logs]
+          .filter(([, log]) => log.reader)
+          .map(([key]) => key.replace(":", "-") + ".json"),
+      );
+      const files = [];
+      for (const name of await readdir(this.dir)) {
+        if (!/^(build|service)-[a-zA-Z0-9_-]+\.json$/.test(name)) continue;
+        const info = await stat(join(this.dir, name)).catch(() => undefined);
+        if (info) files.push({ name, at: info.mtimeMs, size: info.size });
+      }
+      files.sort((a, b) => b.at - a.at); // newest first
+      let total = 0;
+      for (const f of files) {
+        total += f.size;
+        const old = Date.now() - f.at > this.retainMs || total > this.maxBytes;
+        if (old && !live.has(f.name)) {
+          await rm(join(this.dir, f.name), { force: true });
+          total -= f.size;
+          const [kind, ...rest] = f.name.slice(0, -5).split("-");
+          const key = `${kind}:${rest.join("-")}`;
+          if (!this.logs.get(key)?.reader) this.logs.delete(key);
+        }
+      }
+    } catch {
+      /* Logs are a convenience; never fail over them. */
     }
   }
 }
