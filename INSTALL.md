@@ -71,7 +71,7 @@ The first start downloads the package and can exceed Codex's 10-second start lim
 command = "npx"
 args = ["-y", "constructor-research-mcp@latest"]
 # Inside a Constructor desk: pass the desk and its access key on (Codex passes only a few variables).
-env_vars = ["ROLOS_PROJECT_ID", "ROLOS_DESK_ID", "ROLOS_API_SERVER", "RESEARCH_PROJECT_ID", "RESEARCH_DESK_ID", "RESEARCH_API_SERVER", "CONSTRUCTOR_ACCESS_KEY"]
+env_vars = ["ROLOS_PROJECT_ID", "ROLOS_DESK_ID", "ROLOS_API_SERVER", "RESEARCH_PROJECT_ID", "RESEARCH_DESK_ID", "RESEARCH_API_SERVER", "RESEARCH_ACCESS_KEY"]
 startup_timeout_sec = 60
 tool_timeout_sec = 30
 

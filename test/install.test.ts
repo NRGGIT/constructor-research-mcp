@@ -174,7 +174,7 @@ test("Codex: replaces the old table and its sub-tables, keeps everything else", 
   assert.ok(text.includes('[profiles.fast]\nmodel = "gpt-5-mini"'));
   assert.ok(
     text.endsWith(
-      '[mcp_servers.constructor-research]\ncommand = "npx"\nargs = ["-y", "constructor-research-mcp@latest"]\nenv_vars = ["ROLOS_PROJECT_ID", "ROLOS_DESK_ID", "ROLOS_API_SERVER", "RESEARCH_PROJECT_ID", "RESEARCH_DESK_ID", "RESEARCH_API_SERVER", "CONSTRUCTOR_ACCESS_KEY"]\nstartup_timeout_sec = 60\n',
+      '[mcp_servers.constructor-research]\ncommand = "npx"\nargs = ["-y", "constructor-research-mcp@latest"]\nenv_vars = ["ROLOS_PROJECT_ID", "ROLOS_DESK_ID", "ROLOS_API_SERVER", "RESEARCH_PROJECT_ID", "RESEARCH_DESK_ID", "RESEARCH_API_SERVER", "RESEARCH_ACCESS_KEY"]\nstartup_timeout_sec = 60\n',
     ),
   );
   assert.equal(writeToml(file, spec, "global").status, "already");
@@ -559,7 +559,7 @@ test("install inside a desk that provides a key: no key question, the desk's key
     ROLOS_PROJECT_ID: "pppp1111",
     ROLOS_DESK_ID: "dddd2222",
     ROLOS_API_SERVER: deskServer,
-    CONSTRUCTOR_ACCESS_KEY: key,
+    RESEARCH_ACCESS_KEY: key,
   };
   try {
     const keyFile = join(home, "key.json");
@@ -574,7 +574,7 @@ test("install inside a desk that provides a key: no key question, the desk's key
     // Codex is told to pass the desk's variables on to the MCP.
     assert.match(
       readFileSync(join(home, ".codex", "config.toml"), "utf8"),
-      /env_vars = \[.*"ROLOS_PROJECT_ID".*"CONSTRUCTOR_ACCESS_KEY"\]/,
+      /env_vars = \[.*"ROLOS_PROJECT_ID".*"RESEARCH_ACCESS_KEY"\]/,
     );
 
     // A key the user saved for this Constructor is kept.
@@ -594,7 +594,7 @@ test("install inside a desk that provides a key: no key question, the desk's key
     const none = join(home, "none.json");
     const bad = await setup(["-y", "--agents=codex", "--scope=global"], {
       ...env,
-      CONSTRUCTOR_ACCESS_KEY: "rk-wrong-0123456789",
+      RESEARCH_ACCESS_KEY: "rk-wrong-0123456789",
       CONSTRUCTOR_KEY_FILE: none,
     });
     assert.equal(bad.code, 1, bad.out);

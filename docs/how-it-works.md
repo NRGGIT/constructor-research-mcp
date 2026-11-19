@@ -50,9 +50,10 @@ lock file in it. That is the whole coordination model.
 
 - **Only the personal access key.** Every request carries `X-Research-AccessKey: Bearer rk-…`.
   There is no browser sign-in, no cookies, and redirects are never followed.
-- **Where the key comes from:** `CONSTRUCTOR_ACCESS_KEY`, else the key file. The key file is
+- **Where the key comes from:** `CONSTRUCTOR_ACCESS_KEY`, else (inside a desk) the desk's
+  `RESEARCH_ACCESS_KEY`, else the key file. The key file is
   re-read before every tool call, so a key saved meanwhile works without a restart.
-- **The desk's key** (`PlatformApi.deskKey`): inside a desk, `CONSTRUCTOR_ACCESS_KEY` is the key
+- **The desk's key** (`PlatformApi.deskKey`): inside a desk, `RESEARCH_ACCESS_KEY` is the key
   Constructor Research provides there. It is used first. When the key file also holds a different
   key for this Constructor, or the desk's key should be saved, the desk's key is checked once
   (`routeKey` with `checkHome`; cached, an unclear answer is asked again after a minute).
@@ -258,7 +259,7 @@ deletes are batched and approved once; nothing is overwritten silently.
 (Claude Code, Codex, OpenCode, Cursor, Cline, jcode, Gemini CLI), asks project or global, asks which
 Constructor, checks and saves the key, and adds the MCP entry to each agent's settings. The
 key is never written into an agent's settings or a command line. Inside a desk that provides a
-key (`CONSTRUCTOR_ACCESS_KEY`), it asks neither the Constructor nor the key: it checks the desk's
+key (`RESEARCH_ACCESS_KEY`), it asks neither the Constructor nor the key: it checks the desk's
 key and saves it as the desk's, unless the user saved one of their own. The Codex entry carries
 `env_vars` (`DESK_ENV` in `desk.ts`), because Codex passes MCP servers only a few variables.
 Changed settings files are

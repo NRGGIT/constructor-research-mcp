@@ -288,10 +288,12 @@ export async function runInstall(argv: string[]): Promise<number> {
   let base: string;
   /** Inside a Constructor desk, the server it names; the key is checked there too. */
   const deskServer = config.localDesk?.server;
-  /** The access key the desk provides (CONSTRUCTOR_ACCESS_KEY inside a desk); no question then. */
+  /** The access key the desk provides (RESEARCH_ACCESS_KEY); no question then. A key given for -y wins. */
   const deskKey =
-    config.localDesk && !flag("--key-stdin")
-      ? accessKey(env.CONSTRUCTOR_ACCESS_KEY)
+    config.deskKey &&
+    !flag("--key-stdin") &&
+    !(yes && env.CONSTRUCTOR_ACCESS_KEY)
+      ? accessKey(config.deskKey)
       : undefined;
   try {
     const given = value("--constructor");
@@ -421,9 +423,7 @@ export async function runInstall(argv: string[]): Promise<number> {
   } else if (yes) {
     const raw = flag("--key-stdin")
       ? await readStdin()
-      : deskKey
-        ? undefined
-        : env.CONSTRUCTOR_ACCESS_KEY;
+      : env.CONSTRUCTOR_ACCESS_KEY;
     if (raw !== undefined) {
       key = accessKey(raw);
       if (!key) keyProblem = "that is not an access key (it starts with rk-)";

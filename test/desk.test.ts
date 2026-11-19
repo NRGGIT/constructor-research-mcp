@@ -367,7 +367,7 @@ test("inside a desk, the key the desk provides is used without a key from the us
     ROLOS_DESK_ID: D,
     ROLOS_API_SERVER: f.config.baseUrl,
     CONSTRUCTOR_KEY_FILE: keyFile,
-    CONSTRUCTOR_ACCESS_KEY: KEY,
+    RESEARCH_ACCESS_KEY: KEY,
   };
   const saved = async () => JSON.parse(await readFile(keyFile, "utf8"));
   try {
@@ -385,8 +385,8 @@ test("inside a desk, the key the desk provides is used without a key from the us
     await api.request("GET", "/projects");
     assert.equal(f.db.keys.length, 3, "one check, then only the requests");
 
-    // The wait command's shell may drop CONSTRUCTOR_ACCESS_KEY (Codex drops *KEY*): the copy works.
-    const { CONSTRUCTOR_ACCESS_KEY: _, ...shell } = env;
+    // The wait command's shell may drop RESEARCH_ACCESS_KEY (Codex drops *KEY*): the copy works.
+    const { RESEARCH_ACCESS_KEY: _, ...shell } = env;
     const wait = new PlatformApi(configFromEnv(shell));
     await wait.refresh();
     await wait.request("GET", "/projects");
@@ -394,7 +394,7 @@ test("inside a desk, the key the desk provides is used without a key from the us
     // The desk gets a new key: the desk's copy is replaced.
     f.db.key = "rk-renewed-desk-key-0001";
     const renewed = new PlatformApi(
-      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+      configFromEnv({ ...env, RESEARCH_ACCESS_KEY: f.db.key }),
     );
     await renewed.refresh();
     await renewed.request("GET", "/projects");
@@ -403,7 +403,7 @@ test("inside a desk, the key the desk provides is used without a key from the us
     // A key the user saved is never replaced; the desk's key is used while Constructor accepts it…
     await saveKeyFile(keyFile, f.config.baseUrl, "rk-users-own-key-0002");
     const both = new PlatformApi(
-      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+      configFromEnv({ ...env, RESEARCH_ACCESS_KEY: f.db.key }),
     );
     await both.refresh();
     f.db.keys.length = 0;
@@ -417,7 +417,7 @@ test("inside a desk, the key the desk provides is used without a key from the us
     const revoked = new PlatformApi(
       configFromEnv({
         ...env,
-        CONSTRUCTOR_ACCESS_KEY: "rk-revoked-desk-key-03",
+        RESEARCH_ACCESS_KEY: "rk-revoked-desk-key-03",
       }),
     );
     await revoked.refresh();
@@ -439,7 +439,7 @@ test("inside a desk, the key the desk provides is used without a key from the us
     await saveKeyFile(keyFile, f.config.baseUrl, "rk-users-own-key-0002");
     f.db.key = "rk-desk-key-later-revoked";
     const later = new PlatformApi(
-      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+      configFromEnv({ ...env, RESEARCH_ACCESS_KEY: f.db.key }),
     );
     await later.refresh();
     await later.request("GET", "/projects");
@@ -451,18 +451,34 @@ test("inside a desk, the key the desk provides is used without a key from the us
     await later.request("GET", "/projects");
     assert.equal(f.db.keys.at(-1), "Bearer rk-users-own-key-0002");
 
-    // Outside a desk, CONSTRUCTOR_ACCESS_KEY is the user's setting: nothing is saved.
+    // CONSTRUCTOR_ACCESS_KEY (the user's own setting) wins over the desk's key; nothing is saved.
     await rm(keyFile);
+    const own = new PlatformApi(
+      configFromEnv({
+        ...env,
+        CONSTRUCTOR_ACCESS_KEY: f.db.key,
+        RESEARCH_ACCESS_KEY: "rk-some-desk-key-000004",
+      }),
+    );
+    await own.refresh();
+    f.db.keys.length = 0;
+    await own.request("GET", "/projects");
+    assert.deepEqual(f.db.keys, [`Bearer ${f.db.key}`]);
+    await assert.rejects(() => readFile(keyFile));
+
+    // Outside a desk RESEARCH_ACCESS_KEY means nothing: the key file is needed.
     const outside = new PlatformApi(
       configFromEnv({
         HOME: f.dir,
         CONSTRUCTOR_BASE_URL: f.config.baseUrl,
         CONSTRUCTOR_KEY_FILE: keyFile,
-        CONSTRUCTOR_ACCESS_KEY: f.db.key,
+        RESEARCH_ACCESS_KEY: f.db.key,
       }),
     );
-    await outside.refresh();
-    await outside.request("GET", "/projects");
+    await assert.rejects(
+      () => outside.request("GET", "/projects"),
+      (e: any) => e.code === "needs_key",
+    );
     await assert.rejects(() => readFile(keyFile));
   } finally {
     await f.close();

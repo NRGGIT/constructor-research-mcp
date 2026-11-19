@@ -20,6 +20,8 @@ export interface Config {
   keeperPath?: string;
   /** Personal access key (rk-…) from CONSTRUCTOR_ACCESS_KEY; without it the key file is read. */
   accessKey?: string;
+  /** Inside a desk: the access key Constructor Research provides there (RESEARCH_ACCESS_KEY). */
+  deskKey?: string;
   /** Saved key and the Constructor it belongs to (JSON, mode 600); CONSTRUCTOR_KEY_FILE moves it. */
   keyFile: string;
   stateDir: string;
@@ -82,6 +84,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     storagePath: storagePath.replace(/\/$/, ""),
     keeperPath: keeperPath.replace(/\/$/, ""),
     accessKey: env.CONSTRUCTOR_ACCESS_KEY?.trim() || undefined,
+    deskKey: (localDesk && env.RESEARCH_ACCESS_KEY?.trim()) || undefined,
     keyFile: expand(env.CONSTRUCTOR_KEY_FILE ?? DEFAULT_KEY_FILE),
     stateDir: expand(
       env.CONSTRUCTOR_STATE_DIR ?? "~/.local/state/constructor-research-mcp",

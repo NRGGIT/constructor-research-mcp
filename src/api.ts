@@ -49,12 +49,8 @@ export class PlatformApi {
    * Read before every tool call, so a key saved meanwhile is used without a restart.
    */
   async refresh() {
-    // A key in the MCP settings names no Constructor; a desk's key belongs to the desk's.
-    if (
-      this.config.baseUrlFixed ||
-      (this.config.accessKey && !this.config.localDesk)
-    )
-      return;
+    // A key in the MCP settings names no Constructor; it wins over the desk's and the file's.
+    if (this.config.baseUrlFixed || this.config.accessKey) return;
     const saved = await readKeyFile(this.config.keyFile).catch(() => undefined);
     this.config.baseUrl =
       saved?.url ?? this.config.localDesk?.server ?? DEFAULT_BASE_URL;
@@ -93,7 +89,7 @@ export class PlatformApi {
   /** What Constructor said about the desk's key; see deskKey(). */
   private deskCheck?: { tag: string; until: number; result: Promise<KeyCheck> };
   /**
-   * Inside a Constructor desk, CONSTRUCTOR_ACCESS_KEY is the key the desk provides, so the user
+   * Inside a Constructor desk, RESEARCH_ACCESS_KEY is the key the desk provides, so the user
    * need not supply one. It is used first; a key the user saved for this Constructor takes over
    * when Constructor rejects it. Once accepted it is saved to the key file (marked "desk") unless
    * the user saved a key of their own there, so the wait command and hooks find it even when the
@@ -113,7 +109,7 @@ export class PlatformApi {
       throw new ToolError(
         "needs_key",
         this.keyHelp(
-          "Constructor rejected the access key this desk provides (CONSTRUCTOR_ACCESS_KEY).",
+          "Constructor rejected the access key this desk provides (RESEARCH_ACCESS_KEY).",
         ),
         401,
       );
@@ -151,9 +147,9 @@ export class PlatformApi {
   /** The access-key header for a request, and the origin the request goes to. */
   private async auth() {
     let key = this.config.accessKey;
-    if (key !== undefined && this.config.localDesk)
+    if (key === undefined && this.config.deskKey)
       key = await this.deskKey(
-        key,
+        this.config.deskKey,
         await readKeyFile(this.config.keyFile).catch(() => undefined),
       );
     else if (key === undefined) {

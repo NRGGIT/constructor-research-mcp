@@ -30,7 +30,7 @@ export const DESK_ENV = [
   "RESEARCH_PROJECT_ID",
   "RESEARCH_DESK_ID",
   "RESEARCH_API_SERVER",
-  "CONSTRUCTOR_ACCESS_KEY",
+  "RESEARCH_ACCESS_KEY",
 ];
 
 export function localDeskFromEnv(
