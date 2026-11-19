@@ -484,3 +484,38 @@ test("inside a desk, the key the desk provides is used without a key from the us
     await f.close();
   }
 });
+
+test("inside a desk without RESEARCH_ACCESS_KEY nothing changes: the saved key is used as it is, and without one the user is asked to save one", async () => {
+  const f = await platform();
+  const { readFile } = await import("node:fs/promises");
+  const keyFile = join(f.dir, "plain-desk-key.json");
+  const env = {
+    ...ENV,
+    HOME: f.dir,
+    ROLOS_PROJECT_ID: P,
+    ROLOS_DESK_ID: D,
+    ROLOS_API_SERVER: f.config.baseUrl,
+    CONSTRUCTOR_KEY_FILE: keyFile,
+  };
+  try {
+    const none = new PlatformApi(configFromEnv(env));
+    assert.equal(none.config.deskKey, undefined);
+    await none.refresh();
+    await assert.rejects(
+      () => none.request("GET", "/projects"),
+      (e: any) => e.code === "needs_key" && /set-key/.test(e.message),
+    );
+    await assert.rejects(() => readFile(keyFile), "no key file is written");
+
+    await saveKeyFile(keyFile, f.config.baseUrl, KEY);
+    const before = await readFile(keyFile, "utf8");
+    const api = new PlatformApi(configFromEnv(env));
+    await api.refresh();
+    f.db.keys.length = 0;
+    await api.request("GET", "/projects");
+    assert.deepEqual(f.db.keys, [`Bearer ${KEY}`], "no extra check");
+    assert.equal(await readFile(keyFile, "utf8"), before);
+  } finally {
+    await f.close();
+  }
+});
