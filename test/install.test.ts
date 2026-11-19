@@ -174,7 +174,7 @@ test("Codex: replaces the old table and its sub-tables, keeps everything else", 
   assert.ok(text.includes('[profiles.fast]\nmodel = "gpt-5-mini"'));
   assert.ok(
     text.endsWith(
-      '[mcp_servers.constructor-research]\ncommand = "npx"\nargs = ["-y", "constructor-research-mcp@latest"]\nstartup_timeout_sec = 60\n',
+      '[mcp_servers.constructor-research]\ncommand = "npx"\nargs = ["-y", "constructor-research-mcp@latest"]\nenv_vars = ["ROLOS_PROJECT_ID", "ROLOS_DESK_ID", "ROLOS_API_SERVER", "RESEARCH_PROJECT_ID", "RESEARCH_DESK_ID", "RESEARCH_API_SERVER", "CONSTRUCTOR_ACCESS_KEY"]\nstartup_timeout_sec = 60\n',
     ),
   );
   assert.equal(writeToml(file, spec, "global").status, "already");
@@ -540,4 +540,67 @@ test("install --demo stays inside its own folder, whatever the environment point
     [],
     "nothing written outside the demo folder",
   );
+});
+
+test("install inside a desk that provides a key: no key question, the desk's key is checked and saved; a user's own key stays", async () => {
+  const home = temp();
+  mkdirSync(join(home, ".codex"));
+  const { createServer } = await import("node:http");
+  const key = "rk-desk-0123456789abcdef";
+  const http = createServer((req, res) => {
+    res.statusCode =
+      req.headers["x-research-accesskey"] === `Bearer ${key}` ? 200 : 401;
+    res.end("{}");
+  });
+  await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+  const deskServer = `http://127.0.0.1:${(http.address() as any).port}`;
+  const env = {
+    HOME: home,
+    ROLOS_PROJECT_ID: "pppp1111",
+    ROLOS_DESK_ID: "dddd2222",
+    ROLOS_API_SERVER: deskServer,
+    CONSTRUCTOR_ACCESS_KEY: key,
+  };
+  try {
+    const keyFile = join(home, "key.json");
+    const run = await setup(["-y", "--agents=codex", "--scope=global"], {
+      ...env,
+      CONSTRUCTOR_KEY_FILE: keyFile,
+    });
+    assert.equal(run.code, 0, run.out);
+    assert.ok(!run.out.includes(key));
+    assert.match(run.out, /The access key this desk provides \(rk-…cdef\)/);
+    assert.deepEqual(json(keyFile), { url: deskServer, key, source: "desk" });
+    // Codex is told to pass the desk's variables on to the MCP.
+    assert.match(
+      readFileSync(join(home, ".codex", "config.toml"), "utf8"),
+      /env_vars = \[.*"ROLOS_PROJECT_ID".*"CONSTRUCTOR_ACCESS_KEY"\]/,
+    );
+
+    // A key the user saved for this Constructor is kept.
+    const own = join(home, "own.json");
+    writeFileSync(
+      own,
+      JSON.stringify({ url: deskServer, key: "rk-own-key-000001" }),
+    );
+    const kept = await setup(["-y", "--agents=codex", "--scope=global"], {
+      ...env,
+      CONSTRUCTOR_KEY_FILE: own,
+    });
+    assert.equal(kept.code, 0, kept.out);
+    assert.equal(json(own).key, "rk-own-key-000001");
+
+    // A desk key Constructor rejects: reported, nothing saved.
+    const none = join(home, "none.json");
+    const bad = await setup(["-y", "--agents=codex", "--scope=global"], {
+      ...env,
+      CONSTRUCTOR_ACCESS_KEY: "rk-wrong-0123456789",
+      CONSTRUCTOR_KEY_FILE: none,
+    });
+    assert.equal(bad.code, 1, bad.out);
+    assert.match(bad.out, /access key this desk provides was not accepted/);
+    assert.ok(!existsSync(none));
+  } finally {
+    http.close();
+  }
 });

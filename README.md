@@ -1,5 +1,7 @@
 # Constructor Research MCP
 
+> **0.6.5:** inside a Constructor desk, the MCP uses the access key the desk provides (`CONSTRUCTOR_ACCESS_KEY`), so the user needs no key of their own; the Codex entry passes the desk's variables on to the MCP.
+>
 > **0.6.4:** with no project or desk named (and not inside a desk), `deploy_app` creates a new project from a short `project_name` and deploys there.
 >
 > **0.6.3:** `delete_resources` deletes applications, services and images, after the user approves the list.
@@ -64,7 +66,7 @@ npx -y -p constructor-research-mcp@latest constructor-research-set-key https://a
 
 It goes to `~/.config/constructor-research/access-key.json` (mode 600) together with the Constructor it belongs to, and the MCP works with that Constructor. All harnesses (Claude Code, Codex, OpenCode) and the wait command share this one file. Every request rereads it, so a new key needs no restart. A key is never sent to a Constructor other than the one it was saved for.
 
-`CONSTRUCTOR_ACCESS_KEY` in the MCP settings takes precedence over the file. The wait hooks do not see the MCP settings: with the key there, give the hooks the same two variables in their own environment, or save the key with `set-key` as well.
+`CONSTRUCTOR_ACCESS_KEY` in the MCP settings takes precedence over the file (inside a desk it is the desk's key; see below). The wait hooks do not see the MCP settings: with the key there, give the hooks the same two variables in their own environment, or save the key with `set-key` as well.
 
 Without a key, or when Constructor rejects it (401: revoked, expired or for another Constructor), tools return `needs_key` with the command above; a deployment pauses as `needs_key` and resumes on the next check once a valid key is saved. A desk link from another Constructor returns `wrong_environment`.
 
@@ -92,6 +94,10 @@ When the MCP runs in VS Code inside a Constructor Research desk, it finds that d
 - `build_image`, `deploy_app`, `update_app`, `start_app`, `stop_app` and `list_images` act on this desk and project without a desk link; a `desk_url` or other IDs still name another desk;
 - `build.dockerfile` is the path inside the project folder (`/backend/Dockerfile`), or `build.local_path` names a folder inside it; Dockerfiles are checked from the local files;
 - two addresses can lead to the user's Constructor: the one the user named (the saved key's, or `CONSTRUCTOR_BASE_URL`; without either, the desk's server) and the desk's server (`ROLOS_API_SERVER`), which may differ from it, e.g. `https://constructor.app` in a desk opened on `https://acme.constructor.app`. The MCP asks the desk's server once whether it accepts the key: if it does, requests go there, else to the user's address. Links shown to the user and key help keep the user's address, and desk links from either address are accepted. Setup (`install`, `constructor-research-set-key`) checks the key with both and saves it for the user's address when either accepts it.
+
+- **the desk's access key:** Constructor Research sets `CONSTRUCTOR_ACCESS_KEY` in the desk, and the MCP uses it, so the user needs no key of their own and `install` asks for none. A key the user saved for this Constructor stays and takes over when Constructor rejects the desk's key. Once accepted, the desk's key is also saved to the key file, marked `"source": "desk"` (never over a key the user saved), so the wait command and hooks find it even where the agent's shell drops variables named `*KEY*` (Codex does).
+
+Codex starts MCP servers with only a few variables (`HOME`, `PATH`, …). Its entry therefore lists the desk's variables in `env_vars` (names only, no values); `install` writes it. Claude Code passes its whole environment on. Agents that pass on neither (Cline) do not see the desk.
 
 `CONSTRUCTOR_LOCAL_DESK=0` turns this off.
 

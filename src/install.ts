@@ -288,10 +288,16 @@ export async function runInstall(argv: string[]): Promise<number> {
   let base: string;
   /** Inside a Constructor desk, the server it names; the key is checked there too. */
   const deskServer = config.localDesk?.server;
+  /** The access key the desk provides (CONSTRUCTOR_ACCESS_KEY inside a desk); no question then. */
+  const deskKey =
+    config.localDesk && !flag("--key-stdin")
+      ? accessKey(env.CONSTRUCTOR_ACCESS_KEY)
+      : undefined;
   try {
     const given = value("--constructor");
     if (given) base = linkOrigin(given);
-    else if (yes) base = saved?.url ?? deskServer ?? DEFAULT_BASE_URL;
+    else if (yes || deskKey)
+      base = saved?.url ?? deskServer ?? DEFAULT_BASE_URL;
     else {
       // Inside a desk its server is the likely answer, but the user may open another address.
       const known = saved?.url ?? deskServer;
@@ -390,10 +396,34 @@ export async function runInstall(argv: string[]): Promise<number> {
     return route.result!;
   };
   let key: string | undefined;
-  if (yes) {
+  let keySource: "desk" | undefined;
+  let deskDone = false;
+  if (deskKey) {
+    if ((await check(deskKey)) === "ok") {
+      deskDone = true;
+      // A key the user saved for this Constructor stays: the MCP falls back to it.
+      if (saved?.url === base && !saved.source && saved.key !== deskKey)
+        p.log.info(
+          `This desk provides an access key (${mask(deskKey)}); the MCP uses it, and the key saved for ${short(base)} if Constructor rejects the desk's.`,
+        );
+      else {
+        key = deskKey;
+        keySource = "desk";
+      }
+    } else {
+      if (yes)
+        keyProblem = "the access key this desk provides was not accepted";
+      else p.log.warn("The access key this desk provides was not accepted.");
+    }
+  }
+  if (deskDone) {
+    // The desk's key is accepted; nothing to ask.
+  } else if (yes) {
     const raw = flag("--key-stdin")
       ? await readStdin()
-      : env.CONSTRUCTOR_ACCESS_KEY;
+      : deskKey
+        ? undefined
+        : env.CONSTRUCTOR_ACCESS_KEY;
     if (raw !== undefined) {
       key = accessKey(raw);
       if (!key) keyProblem = "that is not an access key (it starts with rk-)";
@@ -402,7 +432,7 @@ export async function runInstall(argv: string[]): Promise<number> {
         key = undefined;
       }
     } else if (!(saved && saved.url === base))
-      keyProblem = "no key given (CONSTRUCTOR_ACCESS_KEY or --key-stdin)";
+      keyProblem ||= "no key given (CONSTRUCTOR_ACCESS_KEY or --key-stdin)";
   } else {
     const keep =
       saved?.url === base &&
@@ -451,10 +481,12 @@ export async function runInstall(argv: string[]): Promise<number> {
   if (key) {
     if (dry) p.log.info(`Dry run: key ${mask(key)} not saved.`);
     else {
-      await saveKeyFile(config.keyFile, base, key);
+      await saveKeyFile(config.keyFile, base, key, keySource);
       keySaved = true;
       p.log.success(
-        `Key saved to ${bold(show(config.keyFile))} ${dim("(readable only by you)")}`,
+        keySource
+          ? `The access key this desk provides (${mask(key)}) is saved to ${bold(show(config.keyFile))} ${dim("(readable only by you)")}, so the wait command finds it too; no key from you is needed`
+          : `Key saved to ${bold(show(config.keyFile))} ${dim("(readable only by you)")}`,
       );
     }
   } else if (keyProblem) p.log.warn(`Key: ${keyProblem}.`);

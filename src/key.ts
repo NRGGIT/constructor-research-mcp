@@ -7,6 +7,8 @@ import { originOf } from "./config.js";
 export interface SavedKey {
   url: string;
   key: string;
+  /** "desk": the MCP saved the key a Constructor desk provides (CONSTRUCTOR_ACCESS_KEY); absent: the user saved it. */
+  source?: "desk";
 }
 
 /** The saved key, or undefined when none was saved. A broken file throws. */
@@ -27,17 +29,31 @@ export async function readKeyFile(file: string): Promise<SavedKey | undefined> {
   }
   if (typeof data?.key !== "string" || typeof data?.url !== "string")
     throw new Error("expected url and key");
-  return { url: originOf(data.url), key: data.key };
+  return {
+    url: originOf(data.url),
+    key: data.key,
+    ...(data.source === "desk" ? { source: "desk" as const } : {}),
+  };
 }
 
 /** Saves the key for one Constructor, mode 600, replacing the file in one step. */
-export async function saveKeyFile(file: string, url: string, key: string) {
+export async function saveKeyFile(
+  file: string,
+  url: string,
+  key: string,
+  source?: "desk",
+) {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, JSON.stringify({ url: originOf(url), key }) + "\n", {
-    mode: 0o600,
-    flag: "wx",
-  });
+  await writeFile(
+    tmp,
+    JSON.stringify({ url: originOf(url), key, ...(source ? { source } : {}) }) +
+      "\n",
+    {
+      mode: 0o600,
+      flag: "wx",
+    },
+  );
   try {
     await rename(tmp, file);
   } catch (err) {

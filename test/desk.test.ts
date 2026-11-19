@@ -355,3 +355,116 @@ test("inside a desk whose server differs from the key's Constructor, the MCP wor
     await f.close();
   }
 });
+
+test("inside a desk, the key the desk provides is used without a key from the user and saved for the wait command", async () => {
+  const f = await platform();
+  const { readFile, stat } = await import("node:fs/promises");
+  const keyFile = join(f.dir, "desk-key.json");
+  const env = {
+    ...ENV,
+    HOME: f.dir,
+    ROLOS_PROJECT_ID: P,
+    ROLOS_DESK_ID: D,
+    ROLOS_API_SERVER: f.config.baseUrl,
+    CONSTRUCTOR_KEY_FILE: keyFile,
+    CONSTRUCTOR_ACCESS_KEY: KEY,
+  };
+  const saved = async () => JSON.parse(await readFile(keyFile, "utf8"));
+  try {
+    // No key saved: the desk's key works and is saved, marked as the desk's, readable only by the user.
+    const api = new PlatformApi(configFromEnv(env));
+    await api.refresh();
+    f.db.keys.length = 0;
+    await api.request("GET", "/projects");
+    assert.deepEqual(await saved(), {
+      url: f.config.baseUrl,
+      key: KEY,
+      source: "desk",
+    });
+    assert.equal((await stat(keyFile)).mode & 0o777, 0o600);
+    await api.request("GET", "/projects");
+    assert.equal(f.db.keys.length, 3, "one check, then only the requests");
+
+    // The wait command's shell may drop CONSTRUCTOR_ACCESS_KEY (Codex drops *KEY*): the copy works.
+    const { CONSTRUCTOR_ACCESS_KEY: _, ...shell } = env;
+    const wait = new PlatformApi(configFromEnv(shell));
+    await wait.refresh();
+    await wait.request("GET", "/projects");
+
+    // The desk gets a new key: the desk's copy is replaced.
+    f.db.key = "rk-renewed-desk-key-0001";
+    const renewed = new PlatformApi(
+      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+    );
+    await renewed.refresh();
+    await renewed.request("GET", "/projects");
+    assert.equal((await saved()).key, f.db.key);
+
+    // A key the user saved is never replaced; the desk's key is used while Constructor accepts it…
+    await saveKeyFile(keyFile, f.config.baseUrl, "rk-users-own-key-0002");
+    const both = new PlatformApi(
+      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+    );
+    await both.refresh();
+    f.db.keys.length = 0;
+    await both.request("GET", "/projects");
+    assert.deepEqual(f.db.keys, [`Bearer ${f.db.key}`, `Bearer ${f.db.key}`]);
+    assert.equal((await saved()).key, "rk-users-own-key-0002");
+    assert.equal((await saved()).source, undefined);
+
+    // …and the user's takes over when Constructor rejects the desk's.
+    f.db.key = "rk-users-own-key-0002";
+    const revoked = new PlatformApi(
+      configFromEnv({
+        ...env,
+        CONSTRUCTOR_ACCESS_KEY: "rk-revoked-desk-key-03",
+      }),
+    );
+    await revoked.refresh();
+    await revoked.request("GET", "/projects");
+    assert.equal(f.db.keys.at(-1), "Bearer rk-users-own-key-0002");
+
+    // A rejected desk key and nothing saved: needs_key, with the way to save one.
+    await rm(keyFile);
+    await assert.rejects(
+      () => revoked.request("GET", "/projects"),
+      (e: any) =>
+        e.code === "needs_key" &&
+        /rejected the access key this desk provides/.test(e.message) &&
+        /set-key/.test(e.message) &&
+        !e.message.includes("rk-revoked"),
+    );
+
+    // Revoked mid-session: the next call checks again and uses the user's key.
+    await saveKeyFile(keyFile, f.config.baseUrl, "rk-users-own-key-0002");
+    f.db.key = "rk-desk-key-later-revoked";
+    const later = new PlatformApi(
+      configFromEnv({ ...env, CONSTRUCTOR_ACCESS_KEY: f.db.key }),
+    );
+    await later.refresh();
+    await later.request("GET", "/projects");
+    f.db.key = "rk-users-own-key-0002";
+    await assert.rejects(
+      () => later.request("GET", "/projects"),
+      (e: any) => e.code === "needs_key",
+    );
+    await later.request("GET", "/projects");
+    assert.equal(f.db.keys.at(-1), "Bearer rk-users-own-key-0002");
+
+    // Outside a desk, CONSTRUCTOR_ACCESS_KEY is the user's setting: nothing is saved.
+    await rm(keyFile);
+    const outside = new PlatformApi(
+      configFromEnv({
+        HOME: f.dir,
+        CONSTRUCTOR_BASE_URL: f.config.baseUrl,
+        CONSTRUCTOR_KEY_FILE: keyFile,
+        CONSTRUCTOR_ACCESS_KEY: f.db.key,
+      }),
+    );
+    await outside.refresh();
+    await outside.request("GET", "/projects");
+    await assert.rejects(() => readFile(keyFile));
+  } finally {
+    await f.close();
+  }
+});

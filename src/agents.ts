@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
+import { DESK_ENV } from "./desk.js";
 
 export const SERVER = "constructor-research";
 export const PACKAGE_SPEC = "constructor-research-mcp@latest";
@@ -242,9 +243,13 @@ export function entryFor(kind: Kind, spec: Spec, opencodeV2 = false): object {
 }
 
 const tomlString = (s: string) => JSON.stringify(s);
-/** Codex: the first npx start downloads the package and can exceed Codex's 10 s start limit. */
+/**
+ * Codex: the first npx start downloads the package and can exceed Codex's 10 s start limit.
+ * Codex starts MCP servers with only a few variables (HOME, PATH, …); env_vars passes on the
+ * ones a Constructor desk sets, names only, so the MCP finds the desk and the desk's key.
+ */
 export const tomlBlock = ({ command, args }: Spec) =>
-  `[mcp_servers.${SERVER}]\ncommand = ${tomlString(command)}\nargs = [${args.map(tomlString).join(", ")}]\nstartup_timeout_sec = 60\n`;
+  `[mcp_servers.${SERVER}]\ncommand = ${tomlString(command)}\nargs = [${args.map(tomlString).join(", ")}]\nenv_vars = [${DESK_ENV.map(tomlString).join(", ")}]\nstartup_timeout_sec = 60\n`;
 
 /** What will be written, for --verbose. */
 export function describe(kind: Kind, spec: Spec, opencodeV2 = false) {
@@ -444,7 +449,11 @@ export function writeToml(path: string, spec: Spec, scope: Scope): Result {
   }
   const entry = after.mcp_servers?.[SERVER];
   if (
-    !isDeepStrictEqual(plain(entry), { ...spec, startup_timeout_sec: 60 }) ||
+    !isDeepStrictEqual(plain(entry), {
+      ...spec,
+      env_vars: DESK_ENV,
+      startup_timeout_sec: 60,
+    }) ||
     !isDeepStrictEqual(withoutOurs(parseToml(old)), withoutOurs(after))
   )
     return untouched(`sets ${SERVER} in a form this setup does not edit`);

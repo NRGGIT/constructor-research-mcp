@@ -18,6 +18,21 @@ export interface LocalDesk {
 
 const ID = /^[a-zA-Z0-9_-]{4,128}$/;
 
+/**
+ * What Constructor sets in a desk that the MCP reads: the desk, its server, and the access key
+ * the desk provides. Agents that start the MCP with a reduced environment (Codex) are told to
+ * pass these on.
+ */
+export const DESK_ENV = [
+  "ROLOS_PROJECT_ID",
+  "ROLOS_DESK_ID",
+  "ROLOS_API_SERVER",
+  "RESEARCH_PROJECT_ID",
+  "RESEARCH_DESK_ID",
+  "RESEARCH_API_SERVER",
+  "CONSTRUCTOR_ACCESS_KEY",
+];
+
 export function localDeskFromEnv(
   env: NodeJS.ProcessEnv,
   origin: (link: string) => string,

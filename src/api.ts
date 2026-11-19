@@ -2,7 +2,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DEFAULT_BASE_URL, VERSION, type Config } from "./config.js";
-import { readKeyFile, routeKey } from "./key.js";
+import {
+  readKeyFile,
+  routeKey,
+  saveKeyFile,
+  type KeyCheck,
+  type SavedKey,
+} from "./key.js";
 export class ToolError extends Error {
   constructor(
     public code: string,
@@ -43,7 +49,12 @@ export class PlatformApi {
    * Read before every tool call, so a key saved meanwhile is used without a restart.
    */
   async refresh() {
-    if (this.config.baseUrlFixed || this.config.accessKey) return;
+    // A key in the MCP settings names no Constructor; a desk's key belongs to the desk's.
+    if (
+      this.config.baseUrlFixed ||
+      (this.config.accessKey && !this.config.localDesk)
+    )
+      return;
     const saved = await readKeyFile(this.config.keyFile).catch(() => undefined);
     this.config.baseUrl =
       saved?.url ?? this.config.localDesk?.server ?? DEFAULT_BASE_URL;
@@ -79,10 +90,73 @@ export class PlatformApi {
     this.route = route;
     return route.origin;
   }
+  /** What Constructor said about the desk's key; see deskKey(). */
+  private deskCheck?: { tag: string; until: number; result: Promise<KeyCheck> };
+  /**
+   * Inside a Constructor desk, CONSTRUCTOR_ACCESS_KEY is the key the desk provides, so the user
+   * need not supply one. It is used first; a key the user saved for this Constructor takes over
+   * when Constructor rejects it. Once accepted it is saved to the key file (marked "desk") unless
+   * the user saved a key of their own there, so the wait command and hooks find it even when the
+   * agent's shell drops variables named *KEY*. Constructor is asked about the key once, and only
+   * when there is a choice or something to save.
+   */
+  private async deskKey(env: string, saved: SavedKey | undefined) {
+    const usable = saved?.url === this.config.baseUrl ? saved : undefined;
+    const clean = cleanKey(env);
+    if (!clean) return usable?.key ?? env;
+    if (usable && cleanKey(usable.key) === clean) return clean;
+    const save = !saved || (saved.source === "desk" && !!usable);
+    if (!usable && !save) return clean;
+    const result = await this.checkDeskKey(clean);
+    if (result === "rejected") {
+      if (usable) return usable.key;
+      throw new ToolError(
+        "needs_key",
+        this.keyHelp(
+          "Constructor rejected the access key this desk provides (CONSTRUCTOR_ACCESS_KEY).",
+        ),
+        401,
+      );
+    }
+    if (result === "ok" && save)
+      await saveKeyFile(this.config.keyFile, this.config.baseUrl, clean, "desk")
+        // The key still works from the environment; only the wait command misses the copy.
+        .catch(() => undefined);
+    return clean;
+  }
+  private checkDeskKey(key: string): Promise<KeyCheck> {
+    const home = this.config.baseUrl;
+    const server = this.config.localDesk?.server;
+    const tag = createHash("sha256")
+      .update(`${home}\n${server}\n${key}`)
+      .digest("hex");
+    if (this.deskCheck?.tag === tag && Date.now() < this.deskCheck.until)
+      return this.deskCheck.result;
+    const check = {
+      tag,
+      until: Infinity,
+      result: routeKey(home, server, this.config.apiPath, key, {
+        checkHome: true,
+        timeoutMs: Math.min(5000, this.config.requestTimeoutMs),
+      }).then((r) => {
+        // Only a clear yes or no holds; an unreachable Constructor is asked again in a minute.
+        if (r.result !== "ok" && r.result !== "rejected")
+          check.until = Date.now() + 60000;
+        return r.result ?? "unreachable";
+      }),
+    };
+    this.deskCheck = check;
+    return check.result;
+  }
   /** The access-key header for a request, and the origin the request goes to. */
   private async auth() {
     let key = this.config.accessKey;
-    if (key === undefined) {
+    if (key !== undefined && this.config.localDesk)
+      key = await this.deskKey(
+        key,
+        await readKeyFile(this.config.keyFile).catch(() => undefined),
+      );
+    else if (key === undefined) {
       let saved;
       try {
         saved = await readKeyFile(this.config.keyFile);
@@ -117,6 +191,9 @@ export class PlatformApi {
     };
   }
   private rejected() {
+    // The next call asks again which key to use and where it goes.
+    this.deskCheck = undefined;
+    this.route = undefined;
     return new ToolError(
       "needs_key",
       this.keyHelp(
